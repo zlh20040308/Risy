@@ -1,0 +1,3 @@
+[submodule "awesome-sysy"]
+	path = awesome-sysy
+	url = git@github.com:pku-minic/awesome-sysy.git
