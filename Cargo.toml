@@ -1,0 +1,17 @@
+[package]
+name = "Risy"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+lalrpop = "0.22.1"
+
+[dependencies]
+lazy_static = "1.5.0"
+lalrpop-util = { version = "0.22.1", features = ["lexer"] }
+koopa = "0.0.8"
+clap = { version = "4.5.35", features = ["derive"] }
+
+
+
+
