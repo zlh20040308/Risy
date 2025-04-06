@@ -31,28 +31,38 @@ impl RegAllocator {
         }
     }
 
+    /// 为某个 SSA 值分配寄存器并记录
     fn alloc(&mut self, value: Value) -> String {
         if let Some(name) = self.map.get(&value) {
             return name.clone();
         }
 
-        let reg = if self.count < self.pool.len() {
-            self.pool[self.count].clone()
-        } else {
-            // 如果寄存器池用光了，就 fallback 到栈或生成额外寄存器名（可拓展）
-            format!("x_tmp{}", self.count - self.pool.len())
-        };
-
+        let reg = self.alloc_new();
         self.map.insert(value, reg.clone());
-        self.count += 1;
         reg
     }
 
+    /// 临时分配一个寄存器（不记录映射关系）
+    fn alloc_tmp(&mut self) -> String {
+        self.alloc_new()
+    }
+
+    /// 获取已分配的寄存器
     fn get(&self, value: &Value) -> Option<&String> {
         self.map.get(value)
     }
-}
 
+    /// 分配一个新的寄存器名
+    fn alloc_new(&mut self) -> String {
+        let reg = if self.count < self.pool.len() {
+            self.pool[self.count].clone()
+        } else {
+            format!("x_tmp{}", self.count - self.pool.len())
+        };
+        self.count += 1;
+        reg
+    }
+}
 
 /// Trait：定义“可以生成汇编”的类型
 pub trait GenerateAsm {
@@ -85,47 +95,69 @@ impl GenerateAsm for FunctionData {
         for (&_bb, bb_node) in self.layout().bbs() {
             for &inst in bb_node.insts().keys() {
                 let value = self.dfg().value(inst);
-                match value.kind() {
-                    ValueKind::Integer(i) => {
-                        let rd = reg_alloc.alloc(inst);
-                        asm.push_str(&format!("  li {}, {}\n", rd, i.value()));
-                    }
 
+                match value.kind() {
                     ValueKind::Binary(bin) => {
                         let lhs_id = bin.lhs();
                         let rhs_id = bin.rhs();
+                        let lhs_value = self.dfg().value(lhs_id);
+                        let rhs_value = self.dfg().value(rhs_id);
 
-                        let lhs = reg_alloc.get(&lhs_id).map(Clone::clone);
-                        let rhs = reg_alloc.get(&rhs_id).map(Clone::clone);
+                        // 为 lhs 分配寄存器
+                        let lhs = match lhs_value.kind() {
+                            ValueKind::Integer(val) => {
+                                // 如果值是 0，直接使用 x0
+                                if val.value() == 0 {
+                                    "x0".to_string() // 直接使用 x0
+                                } else {
+                                    let tmp = reg_alloc.alloc_tmp(); // 临时分配寄存器
+                                    asm.push_str(&format!("  li {}, {}\n", tmp, val.value()));
+                                    tmp
+                                }
+                            }
+                            _ => reg_alloc.alloc(lhs_id), // 如果是指令的结果，则使用 alloc
+                        };
 
-                        let rd = reg_alloc.alloc(inst);
-                        let lhs = lhs.unwrap_or_else(|| reg_alloc.alloc(lhs_id));
-                        let rhs = rhs.unwrap_or_else(|| reg_alloc.alloc(rhs_id));
+                        // 为 rhs 分配寄存器
+                        let rhs = match rhs_value.kind() {
+                            ValueKind::Integer(val) => {
+                                // 如果值是 0，直接使用 x0
+                                if val.value() == 0 {
+                                    "x0".to_string() // 直接使用 x0
+                                } else {
+                                    let tmp = reg_alloc.alloc_tmp(); // 临时分配寄存器
+                                    asm.push_str(&format!("  li {}, {}\n", tmp, val.value()));
+                                    tmp
+                                }
+                            }
+                            _ => reg_alloc.alloc(rhs_id), // 如果是指令的结果，则使用 alloc
+                        };
+
+                        let rd = reg_alloc.alloc(inst); // 为结果分配寄存器
 
                         match bin.op() {
                             BinaryOp::Add => {
-                                asm.push_str(&format!("  add {}, {}, {}\n", rd, lhs, rhs))
+                                asm.push_str(&format!("  add {}, {}, {}\n", rd, lhs, rhs));
                             }
                             BinaryOp::Sub => {
-                                asm.push_str(&format!("  sub {}, {}, {}\n", rd, lhs, rhs))
+                                asm.push_str(&format!("  sub {}, {}, {}\n", rd, lhs, rhs));
                             }
                             BinaryOp::Mul => {
-                                asm.push_str(&format!("  mul {}, {}, {}\n", rd, lhs, rhs))
+                                asm.push_str(&format!("  mul {}, {}, {}\n", rd, lhs, rhs));
                             }
                             BinaryOp::Div => {
-                                asm.push_str(&format!("  div {}, {}, {}\n", rd, lhs, rhs))
+                                asm.push_str(&format!("  div {}, {}, {}\n", rd, lhs, rhs));
                             }
                             BinaryOp::Mod => {
-                                asm.push_str(&format!("  rem {}, {}, {}\n", rd, lhs, rhs))
+                                asm.push_str(&format!("  rem {}, {}, {}\n", rd, lhs, rhs));
                             }
                             BinaryOp::Eq => {
-                                let tmp = format!("t{}", reg_alloc.count);
-                                reg_alloc.count += 1;
+                                let tmp = reg_alloc.alloc_tmp(); // 临时寄存器分配
                                 asm.push_str(&format!("  xor {}, {}, {}\n", tmp, lhs, rhs));
                                 asm.push_str(&format!("  seqz {}, {}\n", rd, tmp));
                             }
                             _ => {
-                                asm.push_str(&format!("  # Unhandled binary op: {:?}\n", bin.op()))
+                                asm.push_str(&format!("  # Unhandled binary op: {:?}\n", bin.op()));
                             }
                         }
                     }
