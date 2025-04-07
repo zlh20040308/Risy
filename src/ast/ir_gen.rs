@@ -1,71 +1,5 @@
-// ast.rs
-
-#[derive(Debug, Clone)]
-pub struct CompUnit {
-    pub func_def: FuncDef,
-}
-
-#[derive(Debug, Clone)]
-pub struct FuncDef {
-    pub func_type: FuncType,
-    pub ident: String,
-    pub block: Block,
-}
-
-#[derive(Debug, Clone)]
-pub enum FuncType {
-    Int,
-}
-
-#[derive(Debug, Clone)]
-pub struct Block {
-    pub stmt: Stmt,
-}
-
-#[derive(Debug, Clone)]
-pub struct Stmt {
-    pub exp: Exp,
-}
-
-#[derive(Debug, Clone)]
-pub struct Exp {
-    pub unary_exp: UnaryExp,
-}
-
-#[derive(Debug, Clone)]
-pub enum PrimaryExp {
-    Number(i32),
-    Paren(Box<Exp>),
-}
-
-#[derive(Debug, Clone)]
-pub enum UnaryExp {
-    Primary(PrimaryExp),
-    UnaryOp(UnaryOp, Box<UnaryExp>),
-}
-
-#[derive(Debug, Clone)]
-pub enum UnaryOp {
-    Plus,
-    Minus,
-    Not,
-}
-
-pub struct IrGenContext {
-    counter: usize,
-}
-
-impl IrGenContext {
-    pub fn new() -> Self {
-        IrGenContext { counter: 0 }
-    }
-
-    pub fn next_temp(&mut self) -> String {
-        let name = format!("%{}", self.counter);
-        self.counter += 1;
-        name
-    }
-}
+use super::context::IrGenContext;
+use super::node::*;
 
 impl CompUnit {
     pub fn to_ir(&self) -> String {
@@ -108,7 +42,46 @@ impl Stmt {
 
 impl Exp {
     pub fn to_ir(&self, ctx: &mut IrGenContext) -> (String, String) {
-        self.unary_exp.to_ir(ctx)
+        self.add_exp.to_ir(ctx)
+    }
+}
+
+impl AddExp {
+    pub fn to_ir(&self, ctx: &mut IrGenContext) -> (String, String) {
+        match self {
+            AddExp::MulExp(mul) => mul.to_ir(ctx),
+            AddExp::Binary(lhs, op, rhs) => {
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
+                let dst = ctx.next_temp();
+                let inst = match op {
+                    BinOp::Add => format!("  {} = add {}, {}", dst, l_val, r_val),
+                    BinOp::Minus => format!("  {} = sub {}, {}", dst, l_val, r_val),
+                    _ => panic!("unexpected binop in AddExp"),
+                };
+                (format!("{}{}{}\n", l_code, r_code, inst), dst)
+            }
+        }
+    }
+}
+
+impl MulExp {
+    pub fn to_ir(&self, ctx: &mut IrGenContext) -> (String, String) {
+        match self {
+            MulExp::Unary(u) => u.to_ir(ctx),
+            MulExp::Binary(lhs, op, rhs) => {
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
+                let dst = ctx.next_temp();
+                let inst = match op {
+                    BinOp::Mul => format!("  {} = mul {}, {}", dst, l_val, r_val),
+                    BinOp::Div => format!("  {} = div {}, {}", dst, l_val, r_val),
+                    BinOp::Mod => format!("  {} = mod {}, {}", dst, l_val, r_val),
+                    _ => panic!("unexpected binop in MulExp"),
+                };
+                (format!("{}{}{}\n", l_code, r_code, inst), dst)
+            }
+        }
     }
 }
 
@@ -133,10 +106,7 @@ impl UnaryExp {
 impl PrimaryExp {
     pub fn to_ir(&self, ctx: &mut IrGenContext) -> (String, String) {
         match self {
-            PrimaryExp::Number(n) => {
-                // 不生成 SSA，直接返回数字字面量
-                (String::new(), format!("{}", n))
-            }
+            PrimaryExp::Number(n) => (String::new(), format!("{}", n)),
             PrimaryExp::Paren(inner) => inner.to_ir(ctx),
         }
     }

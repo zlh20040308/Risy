@@ -13,21 +13,42 @@ match {
   _
 }
 
-pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
+pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { func_def:Box::new(func_def) };
 
 FuncDef: FuncDef = {
   <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => {
-    FuncDef { <> }
+    FuncDef { func_type, ident, block:Box::new(block) }
   }
 }
 
 FuncType: FuncType = "int" => FuncType::Int;
 
-Block: Block = "{" <stmt: Stmt> "}" => Block { <> };
+Block: Block = "{" <stmt: Stmt> "}" => Block { stmt:Box::new(<>) };
 
-Stmt: Stmt = "return" <exp: Exp> ";" => Stmt { <> };
+Stmt: Stmt = "return" <exp: Exp> ";" => Stmt { exp:Box::new(<>) };
 
-Exp: Exp = <unary_exp: UnaryExp> => Exp { <> };
+Exp: Exp = <add_exp: AddExp> => Exp { add_exp:Box::new(<>) };
+
+AddExp: AddExp = {
+    MulExp                                  => AddExp::MulExp(Box::new(<>)),
+    <lhs: AddExp> <op: AddOp> <rhs: MulExp> => AddExp::Binary(Box::new(lhs), op, Box::new(rhs)),
+};
+
+MulExp: MulExp = {
+    UnaryExp                                  => MulExp::Unary(Box::new(<>)),
+    <lhs: MulExp> <op: MulOp> <rhs: UnaryExp> => MulExp::Binary(Box::new(lhs), op, Box::new(rhs)),
+};
+
+AddOp: BinOp = {
+    "+" => BinOp::Add,
+    "-" => BinOp::Minus,
+};
+
+MulOp: BinOp = {
+    "*" => BinOp::Mul,
+    "/" => BinOp::Div,
+    "%" => BinOp::Mod,
+};
 
 PrimaryExp: PrimaryExp = {
     "(" <e:Exp> ")" => PrimaryExp::Paren(Box::new(e)),
@@ -35,7 +56,7 @@ PrimaryExp: PrimaryExp = {
 };
 
 UnaryExp: UnaryExp = {
-    <p:PrimaryExp>            => UnaryExp::Primary(p),
+    <p:PrimaryExp>            => UnaryExp::Primary(Box::new(<>)),
     <op:UnaryOp> <e:UnaryExp> => UnaryExp::UnaryOp(op, Box::new(e)),
 };
 

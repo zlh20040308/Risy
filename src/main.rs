@@ -4,8 +4,8 @@ use lalrpop_util::lalrpop_mod;
 use std::fs;
 use std::io::Result;
 
-mod ast;
 mod asmgen;
+mod ast;
 
 use asmgen::GenerateAsm;
 

@@ -23,7 +23,7 @@ koopa: $(TEST_FILE)
 	@cargo run -- -koopa $(TEST_FILE) -o $(GEN_DIR)/hello.koopa
 
 # 使用 QEMU 运行编译的 main.S 程序
-qemu:
+qemu: riscv
 	riscv64-unknown-elf-gcc -static $(GEN_DIR)/hello.s -o $(GEN_DIR)/hello
 	qemu-riscv64 $(GEN_DIR)/hello
 
