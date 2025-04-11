@@ -50,7 +50,7 @@ impl RegAllocator {
         let reg = if self.count < self.pool.len() {
             self.pool[self.count].clone()
         } else {
-            format!("x_tmp{}", self.count - self.pool.len())
+            panic!("Registers are gone");
         };
         self.count += 1;
         reg
@@ -153,7 +153,7 @@ impl GenerateAsm for FunctionData {
                                 asm.push_str(&format!("  seqz {}, {}\n", rd, rd));
                             }
                             _ => {
-                                asm.push_str(&format!("  # Unhandled binary op: {:?}\n", bin.op()));
+                                panic!("Unhandled binary op: {:?}", bin.op());
                             }
                         }
                     }
@@ -168,7 +168,7 @@ impl GenerateAsm for FunctionData {
                                     if let Some(src) = reg_alloc.get(&val) {
                                         asm.push_str(&format!("  mv a0, {}\n", src));
                                     } else {
-                                        asm.push_str("  # Return value not found\n");
+                                        panic!("Return value not found");
                                     }
                                 }
                             }
@@ -177,7 +177,7 @@ impl GenerateAsm for FunctionData {
                     }
 
                     _ => {
-                        asm.push_str(&format!("  # Unhandled instruction: {:?}\n", value.kind()));
+                        panic!("Unhandled instruction: {:?}\n", value.kind());
                     }
                 }
             }
