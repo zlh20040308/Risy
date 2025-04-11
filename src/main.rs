@@ -1,8 +1,12 @@
 use clap::Parser;
+use env_logger::Builder;
 use lalrpop_util::lalrpop_mod;
+use log::Level;
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
 use std::fs;
 use std::io::Result;
+use std::io::Write;
 
 mod asmgen;
 mod ast;
@@ -33,6 +37,41 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    Builder::from_default_env()
+        .format(|_buf, record| {
+            let level = record.level();
+            let mut stdout = StandardStream::stdout(ColorChoice::Always);
+
+            // 设置颜色
+            let color = match level {
+                Level::Error => Color::Red,
+                Level::Warn => Color::Yellow,
+                Level::Info => Color::Green,
+                Level::Debug => Color::Blue,
+                Level::Trace => Color::Magenta,
+            };
+
+            stdout
+                .set_color(ColorSpec::new().set_fg(Some(color)))
+                .unwrap();
+
+            // 输出日志
+            writeln!(
+                stdout,
+                "{}: {}",
+                level, // 带颜色的日志等级
+                record.args()
+            )
+            .unwrap();
+
+            // 重置颜色
+            stdout.reset().unwrap();
+
+            // 返回 Ok(())，确保返回类型为 Result<(), std::io::Error>
+            Ok(())
+        })
+        .init();
+
     let args = Args::parse();
 
     let source_code = fs::read_to_string(&args.input)?;
@@ -40,6 +79,9 @@ fn main() -> Result<()> {
     let ast = sysy::CompUnitParser::new()
         .parse(&source_code)
         .expect("Parse error");
+
+    let json_str = serde_json::to_string_pretty(&ast).unwrap();
+    fs::write("ast.json", json_str).expect("Failed to write to ast.json");
 
     let ir = ast.to_ir();
 

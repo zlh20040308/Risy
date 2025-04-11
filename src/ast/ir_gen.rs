@@ -42,7 +42,93 @@ impl Stmt {
 
 impl Exp {
     pub fn to_ir(&self, ctx: &mut IrGenContext) -> (String, String) {
-        self.add_exp.to_ir(ctx)
+        self.lor_exp.to_ir(ctx)
+    }
+}
+
+impl RelExp {
+    pub fn to_ir(&self, ctx: &mut IrGenContext) -> (String, String) {
+        match self {
+            RelExp::AddExp(add) => add.to_ir(ctx),
+            RelExp::Rel(lhs, op, rhs) => {
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
+                let dst = ctx.next_temp();
+                let inst = match op {
+                    RelOp::Less => format!("  {} = lt {}, {}", dst, l_val, r_val),
+                    RelOp::Greater => format!("  {} = gt {}, {}", dst, l_val, r_val),
+                    RelOp::LessEq => format!("  {} = le {}, {}", dst, l_val, r_val),
+                    RelOp::GreaterEq => format!("  {} = ge {}, {}", dst, l_val, r_val),
+                };
+                (format!("{}{}{}\n", l_code, r_code, inst), dst)
+            }
+        }
+    }
+}
+
+impl EqExp {
+    pub fn to_ir(&self, ctx: &mut IrGenContext) -> (String, String) {
+        match self {
+            EqExp::RelExp(rel) => rel.to_ir(ctx),
+            EqExp::Eq(lhs, op, rhs) => {
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
+                let dst = ctx.next_temp();
+                let inst = match op {
+                    EqOp::Equal => format!("  {} = eq {}, {}", dst, l_val, r_val),
+                    EqOp::NotEqual => format!("  {} = ne {}, {}", dst, l_val, r_val),
+                };
+                (format!("{}{}{}\n", l_code, r_code, inst), dst)
+            }
+        }
+    }
+}
+
+impl LAndExp {
+    pub fn to_ir(&self, ctx: &mut IrGenContext) -> (String, String) {
+        match self {
+            LAndExp::EqExp(eq) => eq.to_ir(ctx),
+
+            LAndExp::LAnd(lhs, rhs) => {
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
+
+                let l_nonzero = ctx.next_temp();
+                let r_nonzero = ctx.next_temp();
+                let dst = ctx.next_temp();
+
+                let code = format!(
+                    "{}{}  {} = ne {}, 0\n  {} = ne {}, 0\n  {} = and {}, {}\n",
+                    l_code, r_code, l_nonzero, l_val, r_nonzero, r_val, dst, l_nonzero, r_nonzero
+                );
+
+                (code, dst)
+            }
+        }
+    }
+}
+
+impl LOrExp {
+    pub fn to_ir(&self, ctx: &mut IrGenContext) -> (String, String) {
+        match self {
+            LOrExp::LAndExp(land) => land.to_ir(ctx),
+
+            LOrExp::LOr(lhs, rhs) => {
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
+
+                let l_nonzero = ctx.next_temp();
+                let r_nonzero = ctx.next_temp();
+                let dst = ctx.next_temp();
+
+                let code = format!(
+                    "{}{}  {} = ne {}, 0\n  {} = ne {}, 0\n  {} = or {}, {}\n",
+                    l_code, r_code, l_nonzero, l_val, r_nonzero, r_val, dst, l_nonzero, r_nonzero
+                );
+
+                (code, dst)
+            }
+        }
     }
 }
 

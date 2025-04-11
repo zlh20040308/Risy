@@ -1,6 +1,8 @@
 /target
 /debug
 /trash
+/.vscode
 
 *.out
+ast.json
 

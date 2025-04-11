@@ -9,34 +9,69 @@ match {
   // 跳过空白符和注释
   r"\s*" => {},
   r"//[^\n\r]*[\n\r]*" => {},
+  r"/\*[^*]*\*+([^/*][^*]*\*+)*/" => {},
   // 剩下的情况采用默认方式处理
   _
 }
 
-pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { func_def:Box::new(func_def) };
+pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
 
-FuncDef: FuncDef = {
+FuncDef: Box<FuncDef> = {
   <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => {
-    FuncDef { func_type, ident, block:Box::new(block) }
+    Box::new(FuncDef { <> })
   }
 }
 
 FuncType: FuncType = "int" => FuncType::Int;
 
-Block: Block = "{" <stmt: Stmt> "}" => Block { stmt:Box::new(<>) };
+Block: Box<Block> = "{" <stmt: Stmt> "}" => Box::new(Block { <> });
 
-Stmt: Stmt = "return" <exp: Exp> ";" => Stmt { exp:Box::new(<>) };
+Stmt: Box<Stmt> = "return" <exp: Exp> ";" => Box::new(Stmt { <> });
 
-Exp: Exp = <add_exp: AddExp> => Exp { add_exp:Box::new(<>) };
+Exp: Box<Exp> = <lor_exp: LOrExp> => Box::new(Exp { <> });
 
-AddExp: AddExp = {
-    MulExp                                  => AddExp::MulExp(Box::new(<>)),
-    <lhs: AddExp> <op: AddOp> <rhs: MulExp> => AddExp::Binary(Box::new(lhs), op, Box::new(rhs)),
+// RelExp      ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
+RelExp: Box<RelExp> = {
+    AddExp              => Box::new(RelExp::AddExp(<>)),
+    RelExp RelOp AddExp => Box::new(RelExp::Rel(<>)),
 };
 
-MulExp: MulExp = {
-    UnaryExp                                  => MulExp::Unary(Box::new(<>)),
-    <lhs: MulExp> <op: MulOp> <rhs: UnaryExp> => MulExp::Binary(Box::new(lhs), op, Box::new(rhs)),
+// EqExp       ::= RelExp | EqExp ("==" | "!=") RelExp;
+EqExp: Box<EqExp> = {
+    RelExp            => Box::new(EqExp::RelExp(<>)),
+    EqExp EqOp RelExp => Box::new(EqExp::Eq(<>)),
+};
+
+// LAndExp     ::= EqExp | LAndExp "&&" EqExp;
+LAndExp: Box<LAndExp> = {
+    EqExp                            => Box::new(LAndExp::EqExp(<>)),
+    <lhs: LAndExp> "&&" <rhs: EqExp> => Box::new(LAndExp::LAnd(<>)),
+};
+
+// LOrExp      ::= LAndExp | LOrExp "||" LAndExp;
+LOrExp: Box<LOrExp> = {
+    LAndExp                           => Box::new(LOrExp::LAndExp(<>)),
+    <lhs: LOrExp> "||" <rhs: LAndExp> => Box::new(LOrExp::LOr(<>)),
+};
+
+AddExp: Box<AddExp> = {
+    MulExp              => Box::new(AddExp::MulExp(<>)),
+    AddExp AddOp MulExp => Box::new(AddExp::Binary(<>)),
+};
+
+MulExp: Box<MulExp> = {
+    UnaryExp              => Box::new(MulExp::Unary(<>)),
+    MulExp MulOp UnaryExp => Box::new(MulExp::Binary(<>)),
+};
+
+PrimaryExp: Box<PrimaryExp> = {
+    "(" <exp: Exp> ")" => Box::new(PrimaryExp::Paren(<>)),
+    Number             => Box::new(PrimaryExp::Number(<>)),
+};
+
+UnaryExp: Box<UnaryExp> = {
+    PrimaryExp       => Box::new(UnaryExp::Primary(<>)),
+    UnaryOp UnaryExp => Box::new(UnaryExp::UnaryOp(<>)),
 };
 
 AddOp: BinOp = {
@@ -44,20 +79,22 @@ AddOp: BinOp = {
     "-" => BinOp::Minus,
 };
 
+EqOp: EqOp = {
+    "==" => EqOp::Equal,
+    "!=" => EqOp::NotEqual,
+};
+
+RelOp: RelOp = {
+    "<"   => RelOp::Less,
+    ">"   => RelOp::Greater,
+    "<=" => RelOp::LessEq,
+    ">="  => RelOp::GreaterEq,
+};
+
 MulOp: BinOp = {
     "*" => BinOp::Mul,
     "/" => BinOp::Div,
     "%" => BinOp::Mod,
-};
-
-PrimaryExp: PrimaryExp = {
-    "(" <e:Exp> ")" => PrimaryExp::Paren(Box::new(e)),
-    <n:Number>      => PrimaryExp::Number(n),
-};
-
-UnaryExp: UnaryExp = {
-    <p:PrimaryExp>            => UnaryExp::Primary(Box::new(<>)),
-    <op:UnaryOp> <e:UnaryExp> => UnaryExp::UnaryOp(op, Box::new(e)),
 };
 
 UnaryOp: UnaryOp = {

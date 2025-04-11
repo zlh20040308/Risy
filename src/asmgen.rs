@@ -1,6 +1,5 @@
-// codegen.rs
 use koopa::ir::{BinaryOp, FunctionData, Program, Value, ValueKind};
-
+use log::info;
 use std::collections::HashMap;
 
 /// 寄存器分配器：记录每个 SSA 值对应的虚拟寄存器名（如 t0、t1）
@@ -14,12 +13,10 @@ impl RegAllocator {
     fn new() -> Self {
         let mut pool = vec![];
 
-        // 添加 t0 - t6
         for i in 0..=6 {
             pool.push(format!("t{}", i));
         }
 
-        // 添加 a0 - a7
         for i in 0..=7 {
             pool.push(format!("a{}", i));
         }
@@ -31,7 +28,6 @@ impl RegAllocator {
         }
     }
 
-    /// 为某个 SSA 值分配寄存器并记录
     fn alloc(&mut self, value: Value) -> String {
         if let Some(name) = self.map.get(&value) {
             return name.clone();
@@ -42,17 +38,14 @@ impl RegAllocator {
         reg
     }
 
-    /// 临时分配一个寄存器（不记录映射关系）
     fn alloc_tmp(&mut self) -> String {
         self.alloc_new()
     }
 
-    /// 获取已分配的寄存器
     fn get(&self, value: &Value) -> Option<&String> {
         self.map.get(value)
     }
 
-    /// 分配一个新的寄存器名
     fn alloc_new(&mut self) -> String {
         let reg = if self.count < self.pool.len() {
             self.pool[self.count].clone()
@@ -62,14 +55,28 @@ impl RegAllocator {
         self.count += 1;
         reg
     }
+
+    /// 自动判断是立即数或 SSA 值并返回对应寄存器名
+    fn resolve_value(&mut self, val: Value, func: &FunctionData, asm: &mut String) -> String {
+        match func.dfg().value(val).kind() {
+            ValueKind::Integer(imm) => {
+                if imm.value() == 0 {
+                    "x0".to_string()
+                } else {
+                    let tmp = self.alloc_tmp();
+                    asm.push_str(&format!("  li {}, {}\n", tmp, imm.value()));
+                    tmp
+                }
+            }
+            _ => self.alloc(val),
+        }
+    }
 }
 
-/// Trait：定义“可以生成汇编”的类型
 pub trait GenerateAsm {
     fn generate(&self) -> String;
 }
 
-/// 为 Program 实现汇编生成逻辑
 impl GenerateAsm for Program {
     fn generate(&self) -> String {
         let mut asm = String::new();
@@ -82,11 +89,10 @@ impl GenerateAsm for Program {
     }
 }
 
-/// 为 FunctionData 实现汇编生成逻辑
 impl GenerateAsm for FunctionData {
     fn generate(&self) -> String {
         let mut asm = String::new();
-        let func_name = &self.name()[1..]; // 去掉 '@'
+        let func_name = &self.name()[1..];
         asm.push_str(&format!("  .globl {}\n", func_name));
         asm.push_str(&format!("{}:\n", func_name));
 
@@ -95,45 +101,12 @@ impl GenerateAsm for FunctionData {
         for (&_bb, bb_node) in self.layout().bbs() {
             for &inst in bb_node.insts().keys() {
                 let value = self.dfg().value(inst);
-
+                info!("{:?}", value);
                 match value.kind() {
                     ValueKind::Binary(bin) => {
-                        let lhs_id = bin.lhs();
-                        let rhs_id = bin.rhs();
-                        let lhs_value = self.dfg().value(lhs_id);
-                        let rhs_value = self.dfg().value(rhs_id);
-
-                        // 为 lhs 分配寄存器
-                        let lhs = match lhs_value.kind() {
-                            ValueKind::Integer(val) => {
-                                // 如果值是 0，直接使用 x0
-                                if val.value() == 0 {
-                                    "x0".to_string() // 直接使用 x0
-                                } else {
-                                    let tmp = reg_alloc.alloc_tmp(); // 临时分配寄存器
-                                    asm.push_str(&format!("  li {}, {}\n", tmp, val.value()));
-                                    tmp
-                                }
-                            }
-                            _ => reg_alloc.alloc(lhs_id), // 如果是指令的结果，则使用 alloc
-                        };
-
-                        // 为 rhs 分配寄存器
-                        let rhs = match rhs_value.kind() {
-                            ValueKind::Integer(val) => {
-                                // 如果值是 0，直接使用 x0
-                                if val.value() == 0 {
-                                    "x0".to_string() // 直接使用 x0
-                                } else {
-                                    let tmp = reg_alloc.alloc_tmp(); // 临时分配寄存器
-                                    asm.push_str(&format!("  li {}, {}\n", tmp, val.value()));
-                                    tmp
-                                }
-                            }
-                            _ => reg_alloc.alloc(rhs_id), // 如果是指令的结果，则使用 alloc
-                        };
-
-                        let rd = reg_alloc.alloc(inst); // 为结果分配寄存器
+                        let lhs = reg_alloc.resolve_value(bin.lhs(), self, &mut asm);
+                        let rhs = reg_alloc.resolve_value(bin.rhs(), self, &mut asm);
+                        let rd = reg_alloc.alloc(inst);
 
                         match bin.op() {
                             BinaryOp::Add => {
@@ -151,10 +124,33 @@ impl GenerateAsm for FunctionData {
                             BinaryOp::Mod => {
                                 asm.push_str(&format!("  rem {}, {}, {}\n", rd, lhs, rhs));
                             }
+                            BinaryOp::And => {
+                                asm.push_str(&format!("  and {}, {}, {}\n", rd, lhs, rhs));
+                            }
                             BinaryOp::Eq => {
-                                let tmp = reg_alloc.alloc_tmp(); // 临时寄存器分配
-                                asm.push_str(&format!("  xor {}, {}, {}\n", tmp, lhs, rhs));
-                                asm.push_str(&format!("  seqz {}, {}\n", rd, tmp));
+                                asm.push_str(&format!("  xor {}, {}, {}\n", rd, lhs, rhs));
+                                asm.push_str(&format!("  seqz {}, {}\n", rd, rd));
+                            }
+                            BinaryOp::NotEq => {
+                                asm.push_str(&format!("  xor {}, {}, {}\n", rd, lhs, rhs));
+                                asm.push_str(&format!("  snez {}, {}\n", rd, rd));
+                            }
+                            BinaryOp::Or => {
+                                asm.push_str(&format!("  or {}, {}, {}\n", rd, lhs, rhs));
+                            }
+                            BinaryOp::Ge => {
+                                asm.push_str(&format!("  slt {}, {}, {}\n", rd, lhs, rhs));
+                                asm.push_str(&format!("  seqz {}, {}\n", rd, rd));
+                            }
+                            BinaryOp::Lt => {
+                                asm.push_str(&format!("  slt {}, {}, {}\n", rd, lhs, rhs));
+                            }
+                            BinaryOp::Gt => {
+                                asm.push_str(&format!("  slt {}, {}, {}\n", rd, rhs, lhs));
+                            }
+                            BinaryOp::Le => {
+                                asm.push_str(&format!("  slt {}, {}, {}\n", rd, rhs, lhs));
+                                asm.push_str(&format!("  seqz {}, {}\n", rd, rd));
                             }
                             _ => {
                                 asm.push_str(&format!("  # Unhandled binary op: {:?}\n", bin.op()));
@@ -164,10 +160,17 @@ impl GenerateAsm for FunctionData {
 
                     ValueKind::Return(ret) => {
                         if let Some(val) = ret.value() {
-                            if let Some(src) = reg_alloc.get(&val) {
-                                asm.push_str(&format!("  mv a0, {}\n", src));
-                            } else {
-                                asm.push_str("  # Return value not found\n");
+                            match self.dfg().value(val).kind() {
+                                ValueKind::Integer(int_val) => {
+                                    asm.push_str(&format!("  li a0, {}\n", int_val.value()));
+                                }
+                                _ => {
+                                    if let Some(src) = reg_alloc.get(&val) {
+                                        asm.push_str(&format!("  mv a0, {}\n", src));
+                                    } else {
+                                        asm.push_str("  # Return value not found\n");
+                                    }
+                                }
                             }
                         }
                         asm.push_str("  ret\n");
