@@ -8,10 +8,10 @@ use std::fs;
 use std::io::Result;
 use std::io::Write;
 
-mod asmgen;
+mod asm_gen;
 mod ast;
 
-use asmgen::GenerateAsm;
+use asm_gen::GenerateAsm;
 
 lalrpop_mod!(
     #[allow(clippy::ptr_arg)]
@@ -90,6 +90,7 @@ fn main() -> Result<()> {
             fs::write(&args.output, format!("{}", ir))?;
         }
         "-riscv" => {
+            fs::write("ir.koopa", ir.clone()).expect("Failed to write to ir.koopa");
             let driver = koopa::front::Driver::from(ir.clone());
             let program = driver
                 .generate_program()

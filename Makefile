@@ -29,7 +29,7 @@ rebuild:
 
 # 清理输出
 clean:
-	@rm -rf $(GEN_DIR)
+	@rm -rf $(DEBUG_DIR)
 
 # 编译为 Koopa IR
 $(KOOPA_OUT): $(TEST_FILE)

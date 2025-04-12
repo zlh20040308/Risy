@@ -19,7 +19,7 @@ pub enum FuncType {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Block {
-    pub stmt: Box<Stmt>,
+    pub block_items: Vec<Box<BlockItem>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -30,6 +30,44 @@ pub struct Stmt {
 #[derive(Debug, Clone, Serialize)]
 pub struct Exp {
     pub lor_exp: Box<LOrExp>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Decl {
+    pub const_decl: Box<ConstDecl>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConstDecl {
+    pub btype: String,
+    pub const_defs: Vec<Box<ConstDef>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConstDef {
+    pub ident: String,
+    pub const_init_val: Box<ConstInitVal>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConstInitVal {
+    pub const_exp: Box<ConstExp>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LVal {
+    pub ident: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConstExp {
+    pub exp: Box<Exp>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum BlockItem {
+    Decl(Box<Decl>),
+    Stmt(Box<Stmt>),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +109,7 @@ pub enum MulExp {
 #[derive(Debug, Clone, Serialize)]
 pub enum PrimaryExp {
     Number(i32),
+    LVal(Box<LVal>),
     Paren(Box<Exp>),
 }
 
