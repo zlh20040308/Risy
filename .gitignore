@@ -5,4 +5,5 @@
 
 *.out
 ast.json
+ir.koopa
 
