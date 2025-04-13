@@ -10,6 +10,8 @@ use std::io::Write;
 
 mod asm_gen;
 mod ast;
+mod context;
+mod ir_gen;
 
 use asm_gen::GenerateAsm;
 

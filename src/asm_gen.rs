@@ -1,12 +1,10 @@
+// src/asm_gen.rs
 use koopa::ir::{BinaryOp, FunctionData, Program, Value, ValueKind};
 use log::info;
 use std::collections::HashMap;
 
-/// 寄存器分配器：记录每个 SSA 值对应的虚拟寄存器名（如 t0、t1）
 struct RegAllocator {
-    map: HashMap<Value, String>,
     pool: Vec<String>, // 可用寄存器池
-    count: usize,      // 用于记录是否超出了寄存器池
 }
 
 impl RegAllocator {
@@ -17,58 +15,87 @@ impl RegAllocator {
             pool.push(format!("t{}", i));
         }
 
-        for i in 0..=7 {
-            pool.push(format!("a{}", i));
-        }
+        Self { pool }
+    }
 
+    fn alloc(&mut self) -> String {
+        self.pool.pop().unwrap()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StackAllocator {
+    map: HashMap<Value, i32>, // SSA 值 -> 栈偏移（相对于 sp）
+    offset: i32,              // 当前栈帧已分配的大小（负数）
+}
+
+impl StackAllocator {
+    pub fn new() -> Self {
         Self {
             map: HashMap::new(),
-            pool,
-            count: 0,
+            offset: 0,
         }
     }
 
-    fn alloc(&mut self, value: Value) -> String {
-        if let Some(name) = self.map.get(&value) {
-            return name.clone();
+    /// 为一个 SSA 值分配栈空间（默认 4 字节对齐）
+    pub fn alloc(&mut self, value: Value) {
+        if self.map.contains_key(&value) {
+            return;
         }
-
-        let reg = self.alloc_new();
-        self.map.insert(value, reg.clone());
-        reg
+        self.map.insert(value, self.offset);
+        self.offset += 4; // 每次分配 4 字节
     }
 
-    fn alloc_tmp(&mut self) -> String {
-        self.alloc_new()
+    /// 获取某个 SSA 值对应的偏移量
+    pub fn get_offset(&self, value: &Value) -> Option<i32> {
+        self.map.get(value).copied()
     }
 
-    fn get(&self, value: &Value) -> Option<&String> {
-        self.map.get(value)
+    /// 返回整个栈帧大小
+    pub fn frame_size(&self) -> i32 {
+        self.offset
     }
 
-    fn alloc_new(&mut self) -> String {
-        let reg = if self.count < self.pool.len() {
-            self.pool[self.count].clone()
-        } else {
-            panic!("Registers are gone");
-        };
-        self.count += 1;
-        reg
+    fn scan_allocs(&mut self, func: &FunctionData) {
+        for (&_bb, bb_node) in func.layout().bbs() {
+            for &inst in bb_node.insts().keys() {
+                let value_data = func.dfg().value(inst);
+                if value_data.ty().is_unit() {
+                    continue;
+                }
+                self.alloc(inst);
+            }
+        }
+        // sp 寄存器用来保存栈指针, 它的值必须是 16 字节对齐的
+        self.offset = (self.offset + 15) & !15;
     }
 
-    /// 自动判断是立即数或 SSA 值并返回对应寄存器名
-    fn resolve_value(&mut self, val: Value, func: &FunctionData, asm: &mut String) -> String {
+    fn resolve_value(
+        &self,
+        val: Value,
+        func: &FunctionData,
+        asm: &mut String,
+        reg_alloc: &mut RegAllocator,
+    ) -> String {
         match func.dfg().value(val).kind() {
             ValueKind::Integer(imm) => {
                 if imm.value() == 0 {
                     "x0".to_string()
                 } else {
-                    let tmp = self.alloc_tmp();
-                    asm.push_str(&format!("  li {}, {}\n", tmp, imm.value()));
-                    tmp
+                    let reg = reg_alloc.alloc();
+                    asm.push_str(&format!("  li {}, {}\n", reg, imm.value()));
+                    reg
                 }
             }
-            _ => self.alloc(val),
+            _ => {
+                let dst = reg_alloc.alloc();
+                asm.push_str(&format!(
+                    "  lw {}, {}(sp)\n",
+                    dst,
+                    self.get_offset(&val).unwrap()
+                ));
+                dst
+            }
         }
     }
 }
@@ -96,17 +123,24 @@ impl GenerateAsm for FunctionData {
         asm.push_str(&format!("  .globl {}\n", func_name));
         asm.push_str(&format!("{}:\n", func_name));
 
-        let mut reg_alloc = RegAllocator::new();
+        let mut stack_alloc = StackAllocator::new();
+        stack_alloc.scan_allocs(self);
+        println!("{:?}", stack_alloc);
+        asm.push_str(&format!("  addi sp, sp, -{}\n", stack_alloc.frame_size()));
 
         for (&_bb, bb_node) in self.layout().bbs() {
             for &inst in bb_node.insts().keys() {
+                let mut reg_alloc = RegAllocator::new();
                 let value = self.dfg().value(inst);
-                info!("{:?}", value);
+                println!("{:?}", value);
                 match value.kind() {
                     ValueKind::Binary(bin) => {
-                        let lhs = reg_alloc.resolve_value(bin.lhs(), self, &mut asm);
-                        let rhs = reg_alloc.resolve_value(bin.rhs(), self, &mut asm);
-                        let rd = reg_alloc.alloc(inst);
+                        let lhs =
+                            stack_alloc.resolve_value(bin.lhs(), self, &mut asm, &mut reg_alloc);
+                        let rhs =
+                            stack_alloc.resolve_value(bin.rhs(), self, &mut asm, &mut reg_alloc);
+
+                        let rd = reg_alloc.alloc();
 
                         match bin.op() {
                             BinaryOp::Add => {
@@ -156,6 +190,11 @@ impl GenerateAsm for FunctionData {
                                 panic!("Unhandled binary op: {:?}", bin.op());
                             }
                         }
+                        asm.push_str(&format!(
+                            "  sw {}, {}(sp)\n",
+                            rd,
+                            stack_alloc.get_offset(&inst).unwrap()
+                        ));
                     }
 
                     ValueKind::Return(ret) => {
@@ -165,17 +204,51 @@ impl GenerateAsm for FunctionData {
                                     asm.push_str(&format!("  li a0, {}\n", int_val.value()));
                                 }
                                 _ => {
-                                    if let Some(src) = reg_alloc.get(&val) {
-                                        asm.push_str(&format!("  mv a0, {}\n", src));
-                                    } else {
-                                        panic!("Return value not found");
-                                    }
+                                    let dst = stack_alloc.resolve_value(
+                                        val,
+                                        self,
+                                        &mut asm,
+                                        &mut reg_alloc,
+                                    );
+                                    asm.push_str(&format!("  mv a0, {}\n", dst));
                                 }
                             }
                         }
+                        asm.push_str(&format!("  addi sp, sp, {}\n", stack_alloc.frame_size()));
                         asm.push_str("  ret\n");
                     }
+                    ValueKind::Store(store) => {
+                        let store_dest = store.dest();
+                        let store_value = store.value();
+                        let dest_offset = stack_alloc.get_offset(&store_dest).unwrap();
 
+                        let value_data = self.dfg().value(store_value);
+                        let temp = reg_alloc.alloc();
+
+                        match value_data.kind() {
+                            ValueKind::Integer(int_val) => {
+                                // 立即数，直接加载立即数
+                                asm.push_str(&format!("  li {}, {}\n", temp, int_val.value()));
+                            }
+                            _ => {
+                                // 正常变量，从栈中加载
+                                let value_offset = stack_alloc.get_offset(&store_value).expect(
+                                    &format!("store_value not allocated: {:?}", store_value),
+                                );
+                                asm.push_str(&format!("  lw {}, {}(sp)\n", temp, value_offset));
+                            }
+                        }
+                        asm.push_str(&format!("  sw {}, {}(sp)\n", temp, dest_offset));
+                    }
+                    ValueKind::Load(load) => {
+                        let src = load.src();
+                        let src_offset = stack_alloc.get_offset(&src).unwrap();
+                        let dest_offset = stack_alloc.get_offset(&inst).unwrap();
+                        let temp = reg_alloc.alloc();
+                        asm.push_str(&format!("  lw {}, {}(sp)\n", temp, src_offset));
+                        asm.push_str(&format!("  sw {}, {}(sp)\n", temp, dest_offset));
+                    }
+                    ValueKind::Alloc(_) => {}
                     _ => {
                         panic!("Unhandled instruction: {:?}\n", value.kind());
                     }

@@ -6,20 +6,20 @@ grammar;
 
 // 约束 lexer 的行为
 match {
-  // 跳过空白符和注释
-  r"\s*" => {},
-  r"//[^\n\r]*[\n\r]*" => {},
-  r"/\*[^*]*\*+([^/*][^*]*\*+)*/" => {},
-  // 剩下的情况采用默认方式处理
-  _
+    // 跳过空白符和注释
+    r"\s*" => {},
+    r"//[^\n\r]*[\n\r]*" => {},
+    r"/\*[^*]*\*+([^/*][^*]*\*+)*/" => {},
+    // 剩下的情况采用默认方式处理
+    _
 }
 
 pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
 
 FuncDef: Box<FuncDef> = {
-  <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => {
-    Box::new(FuncDef { <> })
-  }
+    <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => {
+        Box::new(FuncDef { <> })
+    }
 }
 
 FuncType: FuncType = "int" => FuncType::Int;
@@ -27,12 +27,34 @@ FuncType: FuncType = "int" => FuncType::Int;
 // Block         ::= "{" {BlockItem} "}";
 Block: Box<Block> = "{" <block_items: BlockItem*> "}" => Box::new(Block { <> });
 
-Stmt: Box<Stmt> = "return" <exp: Exp> ";" => Box::new(Stmt { <> });
+// Stmt          ::= LVal "=" Exp ";"
+//                 | "return" Exp ";";
+Stmt: Box<Stmt> = {
+    <LVal> "=" <Exp> ";" => Box::new(Stmt::Assign(<>)),
+    "return" <Exp> ";"   => Box::new(Stmt::Return(<>)),
+};
 
 Exp: Box<Exp> = <lor_exp: LOrExp> => Box::new(Exp { <> });
 
-// Decl          ::= ConstDecl;
-Decl: Box<Decl> = <const_decl: ConstDecl> => Box::new(Decl { <> });
+// Decl          ::= ConstDecl | VarDecl;
+Decl: Box<Decl> = {
+    ConstDecl => Box::new(Decl::Const(<>)),
+    VarDecl   => Box::new(Decl::Var(<>)),
+};
+
+// VarDecl       ::= BType VarDef {"," VarDef} ";";
+VarDecl: Box<VarDecl> = {
+    <btype: BType> <first_def: VarDef> <rest_defs: ("," <VarDef>)*> ";" => {
+        let mut var_defs = vec![first_def];
+        for def in rest_defs {
+            var_defs.push(def);
+        }
+        Box::new(VarDecl {
+            btype,
+            var_defs,
+        })
+    }
+}
 
 // ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
 ConstDecl: Box<ConstDecl> = {
@@ -51,6 +73,12 @@ ConstDecl: Box<ConstDecl> = {
 // BType         ::= "int";
 BType: String = "int" => <>.to_string();
 
+// VarDef        ::= IDENT | IDENT "=" InitVal;
+VarDef: Box<VarDef> = {
+    Ident                 => Box::new(VarDef::Ident(<>)),
+    <Ident> "=" <InitVal> => Box::new(VarDef::Init(<>)),
+};
+
 // ConstDef      ::= IDENT "=" ConstInitVal;
 ConstDef: Box<ConstDef> = <ident: Ident> "=" <const_init_val: ConstInitVal> => Box::new(ConstDef { <> });
 
@@ -65,6 +93,9 @@ BlockItem: Box<BlockItem> = {
 
 // LVal          ::= IDENT;
 LVal: Box<LVal> = <ident: Ident> => Box::new(LVal { <> });
+
+// InitVal       ::= Exp;
+InitVal: Box<InitVal> = <exp: Exp> => Box::new(InitVal { <> });
 
 // ConstExp      ::= Exp;
 ConstExp: Box<ConstExp> = <exp: Exp> => Box::new(ConstExp { <> });
@@ -83,14 +114,14 @@ EqExp: Box<EqExp> = {
 
 // LAndExp     ::= EqExp | LAndExp "&&" EqExp;
 LAndExp: Box<LAndExp> = {
-    EqExp                            => Box::new(LAndExp::EqExp(<>)),
-    <lhs: LAndExp> "&&" <rhs: EqExp> => Box::new(LAndExp::LAnd(<>)),
+    EqExp                  => Box::new(LAndExp::EqExp(<>)),
+    <LAndExp> "&&" <EqExp> => Box::new(LAndExp::LAnd(<>)),
 };
 
 // LOrExp      ::= LAndExp | LOrExp "||" LAndExp;
 LOrExp: Box<LOrExp> = {
-    LAndExp                           => Box::new(LOrExp::LAndExp(<>)),
-    <lhs: LOrExp> "||" <rhs: LAndExp> => Box::new(LOrExp::LOr(<>)),
+    LAndExp                 => Box::new(LOrExp::LAndExp(<>)),
+    <LOrExp> "||" <LAndExp> => Box::new(LOrExp::LOr(<>)),
 };
 
 AddExp: Box<AddExp> = {
@@ -105,9 +136,9 @@ MulExp: Box<MulExp> = {
 
 // PrimaryExp    ::= "(" Exp ")" | LVal | Number;
 PrimaryExp: Box<PrimaryExp> = {
-    "(" <exp: Exp> ")" => Box::new(PrimaryExp::Paren(<>)),
-    LVal               => Box::new(PrimaryExp::LVal(<>)),
-    Number             => Box::new(PrimaryExp::Number(<>)),
+    "(" <Exp> ")" => Box::new(PrimaryExp::Paren(<>)),
+    LVal          => Box::new(PrimaryExp::LVal(<>)),
+    Number        => Box::new(PrimaryExp::Number(<>)),
 };
 
 UnaryExp: Box<UnaryExp> = {
@@ -146,14 +177,10 @@ UnaryOp: UnaryOp = {
 
 Number: i32 = <num: IntConst> => <>;
 
-// 如果匹配到标识符, 就返回这个字符串
-// 一对尖括号在此处指代的是正则表达式匹配到的字符串 (&str)
-// 关于尖括号到底代表什么, 请 RTFM
 Ident: String = r"[_a-zA-Z][_a-zA-Z0-9]*" => <>.to_string();
 
-// 对整数字面量的处理方式: 把匹配到的字符串按对应进制转换成数字
 IntConst: i32 = {
-  r"[1-9][0-9]*" => i32::from_str_radix(<>, 10).unwrap(),
-  r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),
-  r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),
+    r"[1-9][0-9]*" => i32::from_str_radix(<>, 10).unwrap(),
+    r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),
+    r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),
 }

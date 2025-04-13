@@ -1,3 +1,4 @@
+// src/ast.rs
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -23,8 +24,9 @@ pub struct Block {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Stmt {
-    pub exp: Box<Exp>,
+pub enum Stmt {
+    Assign(Box<LVal>, Box<Exp>),
+    Return(Box<Exp>),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,14 +35,27 @@ pub struct Exp {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Decl {
-    pub const_decl: Box<ConstDecl>,
+pub enum Decl {
+    Const(Box<ConstDecl>),
+    Var(Box<VarDecl>),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VarDecl {
+    pub btype: String,
+    pub var_defs: Vec<Box<VarDef>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ConstDecl {
     pub btype: String,
     pub const_defs: Vec<Box<ConstDef>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum VarDef {
+    Ident(String),
+    Init(String, Box<InitVal>),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -57,6 +72,11 @@ pub struct ConstInitVal {
 #[derive(Debug, Clone, Serialize)]
 pub struct LVal {
     pub ident: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InitVal {
+    pub exp: Box<Exp>,
 }
 
 #[derive(Debug, Clone, Serialize)]
