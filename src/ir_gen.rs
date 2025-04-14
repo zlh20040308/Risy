@@ -14,7 +14,7 @@ impl FuncDef {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         let body = self.block.to_ir(ctx);
         format!(
-            "fun @{}(): {} {{\n{}\n}}",
+            "fun @{}(): {} {{\n%entry:\n{}\n}}",
             self.ident,
             self.func_type.to_ir(),
             body
@@ -32,23 +32,14 @@ impl Block {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         ctx.enter_scope();
 
-        for item in &self.block_items {
-            if let BlockItem::Decl(decl) = &**item {
-                if let Decl::Const(const_decl) = &**decl {
-                    const_decl.analyze(ctx).expect("Semantic error");
-                }
-            }
-        }
-
-        println!("{}", serde_json::to_string_pretty(&ctx).unwrap());
-
         let mut ir_code = String::new();
         for item in &self.block_items {
             ir_code.push_str(&item.to_ir(ctx));
         }
+        println!("{}", serde_json::to_string_pretty(&ctx).unwrap());
 
         ctx.exit_scope();
-        format!("%entry:\n{}", ir_code)
+        ir_code
     }
 }
 
@@ -58,13 +49,28 @@ impl Stmt {
             Stmt::Assign(l_val, exp) => {
                 let (exp_code, exp_val) = exp.to_ir(ctx);
                 let var_name = l_val.to_ir(ctx);
-
                 format!("{}  store {}, {}\n", exp_code, exp_val, var_name)
             }
+            Stmt::Block(block) => {
+                let code = block.to_ir(ctx);
+                format!("{}", code)
+            }
+            Stmt::Exp(exp) => {
+                if let Some(exp) = exp {
+                    let (exp_code, _) = exp.to_ir(ctx);
+                    exp_code
+                } else {
+                    String::new()
+                }
+            }
             Stmt::Return(exp) => {
-                let (exp_code, exp_val_raw) = exp.to_ir(ctx);
-                let (load_code, exp_val) = ctx.load_if_needed(exp_val_raw);
-                format!("{}{}  ret {}", exp_code, load_code, exp_val)
+                if let Some(exp) = exp {
+                    let (exp_code, exp_val_raw) = exp.to_ir(ctx);
+                    let (load_code, exp_val) = ctx.load_if_needed(exp_val_raw);
+                    format!("{}{}  ret {}", exp_code, load_code, exp_val)
+                } else {
+                    format!("  ret")
+                }
             }
         }
     }
@@ -83,8 +89,11 @@ impl Exp {
 impl Decl {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            Decl::Var(decl) => decl.to_ir(ctx),
-            _ => String::new(),
+            Decl::Var(var_decl) => var_decl.to_ir(ctx),
+            Decl::Const(const_decl) => {
+                const_decl.analyze(ctx).expect("Semantic error");
+                String::new()
+            }
         }
     }
 }

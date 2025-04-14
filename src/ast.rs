@@ -26,7 +26,9 @@ pub struct Block {
 #[derive(Debug, Clone, Serialize)]
 pub enum Stmt {
     Assign(Box<LVal>, Box<Exp>),
-    Return(Box<Exp>),
+    Exp(Option<Box<Exp>>),
+    Block(Box<Block>),
+    Return(Option<Box<Exp>>),
 }
 
 #[derive(Debug, Clone, Serialize)]

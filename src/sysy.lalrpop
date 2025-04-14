@@ -27,11 +27,15 @@ FuncType: FuncType = "int" => FuncType::Int;
 // Block         ::= "{" {BlockItem} "}";
 Block: Box<Block> = "{" <block_items: BlockItem*> "}" => Box::new(Block { <> });
 
-// Stmt          ::= LVal "=" Exp ";"
-//                 | "return" Exp ";";
+// Stmt ::= LVal "=" Exp ";"
+//        | [Exp] ";"
+//        | Block
+//        | "return" [Exp] ";";
 Stmt: Box<Stmt> = {
     <LVal> "=" <Exp> ";" => Box::new(Stmt::Assign(<>)),
-    "return" <Exp> ";"   => Box::new(Stmt::Return(<>)),
+    <Exp?> ";"           => Box::new(Stmt::Exp(<>)),
+    Block                => Box::new(Stmt::Block(<>)),
+    "return" <Exp?> ";"  => Box::new(Stmt::Return(<>)),
 };
 
 Exp: Box<Exp> = <lor_exp: LOrExp> => Box::new(Exp { <> });
