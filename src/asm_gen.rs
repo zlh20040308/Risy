@@ -1,7 +1,6 @@
 // src/asm_gen.rs
-use koopa::ir::{BinaryOp, FunctionData, Program, Value, ValueKind};
-use log::info;
-use std::collections::HashMap;
+use koopa::ir::{BasicBlock, BinaryOp, FunctionData, Program, Value, ValueKind};
+use std::{any::Any, collections::HashMap};
 
 struct RegAllocator {
     pool: Vec<String>, // 可用寄存器池
@@ -100,6 +99,31 @@ impl StackAllocator {
     }
 }
 
+pub struct LabelTable {
+    labels: HashMap<BasicBlock, String>,
+    counter: usize,
+}
+
+impl LabelTable {
+    pub fn new() -> Self {
+        Self {
+            labels: HashMap::new(),
+            counter: 0,
+        }
+    }
+
+    pub fn get_or_assign(&mut self, block: BasicBlock) -> String {
+        if let Some(label) = self.labels.get(&block) {
+            return label.clone();
+        }
+
+        let label = format!("L_{}", self.counter);
+        self.counter += 1;
+        self.labels.insert(block, label.clone());
+        label
+    }
+}
+
 pub trait GenerateAsm {
     fn generate(&self) -> String;
 }
@@ -124,11 +148,13 @@ impl GenerateAsm for FunctionData {
         asm.push_str(&format!("{}:\n", func_name));
 
         let mut stack_alloc = StackAllocator::new();
+        let mut label_table = LabelTable::new();
         stack_alloc.scan_allocs(self);
         println!("{:?}", stack_alloc);
         asm.push_str(&format!("  addi sp, sp, -{}\n", stack_alloc.frame_size()));
 
-        for (&_bb, bb_node) in self.layout().bbs() {
+        for (&bb, bb_node) in self.layout().bbs() {
+            asm.push_str(&format!("{}:\n", label_table.get_or_assign(bb)));
             for &inst in bb_node.insts().keys() {
                 let mut reg_alloc = RegAllocator::new();
                 let value = self.dfg().value(inst);
@@ -247,6 +273,25 @@ impl GenerateAsm for FunctionData {
                         let temp = reg_alloc.alloc();
                         asm.push_str(&format!("  lw {}, {}(sp)\n", temp, src_offset));
                         asm.push_str(&format!("  sw {}, {}(sp)\n", temp, dest_offset));
+                    }
+                    ValueKind::Branch(branch) => {
+                        // # if 的条件判断部分
+                        // lw t0, 4(sp)
+                        // bnez t0, then
+                        // j else
+                        let temp = reg_alloc.alloc();
+                        let true_bb_label = label_table.get_or_assign(branch.true_bb());
+                        let false_bb_label = label_table.get_or_assign(branch.false_bb());
+
+                        let cond = branch.cond();
+                        let cond_offset = stack_alloc.get_offset(&cond).unwrap();
+                        asm.push_str(&format!("  lw {}, {}(sp)\n", temp, cond_offset));
+                        asm.push_str(&format!("  bnez {}, {}\n", temp, true_bb_label));
+                        asm.push_str(&format!("  j {}\n", false_bb_label));
+                    }
+                    ValueKind::Jump(jump) => {
+                        let target_bb_label = label_table.get_or_assign(jump.target());
+                        asm.push_str(&format!("  j {}\n", target_bb_label));
                     }
                     ValueKind::Alloc(_) => {}
                     _ => {

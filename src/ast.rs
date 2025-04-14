@@ -25,6 +25,24 @@ pub struct Block {
 
 #[derive(Debug, Clone, Serialize)]
 pub enum Stmt {
+    Matched(Box<MatchedStmt>),
+    Unmatched(Box<UnmatchedStmt>),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum MatchedStmt {
+    If(Box<Exp>, Box<MatchedStmt>, Box<MatchedStmt>),
+    NonIf(Box<NonIfStmt>),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum UnmatchedStmt {
+    Else(Box<Exp>, Box<Stmt>),
+    NonElse(Box<Exp>, Box<MatchedStmt>, Box<UnmatchedStmt>),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum NonIfStmt {
     Assign(Box<LVal>, Box<Exp>),
     Exp(Option<Box<Exp>>),
     Block(Box<Block>),

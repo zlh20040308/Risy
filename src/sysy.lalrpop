@@ -27,15 +27,35 @@ FuncType: FuncType = "int" => FuncType::Int;
 // Block         ::= "{" {BlockItem} "}";
 Block: Box<Block> = "{" <block_items: BlockItem*> "}" => Box::new(Block { <> });
 
-// Stmt ::= LVal "=" Exp ";"
-//        | [Exp] ";"
-//        | Block
-//        | "return" [Exp] ";";
+// Stmt    ::= MatchedStmt | UnmatchedStmt;
 Stmt: Box<Stmt> = {
-    <LVal> "=" <Exp> ";" => Box::new(Stmt::Assign(<>)),
-    <Exp?> ";"           => Box::new(Stmt::Exp(<>)),
-    Block                => Box::new(Stmt::Block(<>)),
-    "return" <Exp?> ";"  => Box::new(Stmt::Return(<>)),
+    MatchedStmt   => Box::new(Stmt::Matched(<>)),
+    UnmatchedStmt => Box::new(Stmt::Unmatched(<>))
+};
+
+// MatchedStmt  ::= "if" "(" Exp ")" MatchedStmt "else" MatchedStmt 
+//                | NonIfStmt
+MatchedStmt: Box<MatchedStmt> = {
+    "if" "(" <Exp> ")" <MatchedStmt> "else" <MatchedStmt> => Box::new(MatchedStmt::If(<>)),
+    NonIfStmt                                             => Box::new(MatchedStmt::NonIf(<>))
+};
+
+// UnmatchedStmt  ::= "if" "(" Exp ")" Stmt 
+//                  | "if" "(" Exp ")" MatchedStmt "else" UnmatchedStmt 
+UnmatchedStmt: Box<UnmatchedStmt> = {
+    "if" "(" <Exp> ")" <Stmt>                               => Box::new(UnmatchedStmt::Else(<>)),
+    "if" "(" <Exp> ")" <MatchedStmt> "else" <UnmatchedStmt> => Box::new(UnmatchedStmt::NonElse(<>))
+};
+
+// NonIfStmt    ::= LVal "=" Exp ";"
+//                | [Exp] ";"
+//                | Block
+//                | "return" [Exp] ";";
+NonIfStmt: Box<NonIfStmt> = {
+    <LVal> "=" <Exp> ";" => Box::new(NonIfStmt::Assign(<>)),
+    <Exp?> ";"           => Box::new(NonIfStmt::Exp(<>)),
+    Block                => Box::new(NonIfStmt::Block(<>)),
+    "return" <Exp?> ";"  => Box::new(NonIfStmt::Return(<>)),
 };
 
 Exp: Box<Exp> = <lor_exp: LOrExp> => Box::new(Exp { <> });

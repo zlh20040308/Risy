@@ -3,6 +3,18 @@ use super::ast::*;
 use super::context::IrContext;
 use super::context::SymbolValue;
 
+/// 判断一段 IR 是否已经以 `ret` 或 `jump` 结束
+fn is_terminated(code: &str) -> bool {
+    code.trim_end()
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map_or(false, |line| {
+            let line = line.trim_start();
+            line.starts_with("ret") || line.starts_with("jump")
+        })
+}
+
 impl CompUnit {
     pub fn to_ir(&self) -> String {
         let mut ctx = IrContext::new();
@@ -13,12 +25,16 @@ impl CompUnit {
 impl FuncDef {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         let body = self.block.to_ir(ctx);
-        format!(
-            "fun @{}(): {} {{\n%entry:\n{}\n}}",
+        let mut code = String::new();
+        code.push_str(&format!(
+            "fun @{}(): {} {{\n",
             self.ident,
-            self.func_type.to_ir(),
-            body
-        )
+            self.func_type.to_ir()
+        ));
+        code.push_str("%entry:\n");
+        code.push_str(&body);
+        code.push_str("}");
+        code
     }
 }
 
@@ -34,11 +50,17 @@ impl Block {
 
         let mut ir_code = String::new();
         for item in &self.block_items {
-            ir_code.push_str(&item.to_ir(ctx));
-        }
-        println!("{}", serde_json::to_string_pretty(&ctx).unwrap());
+            let item_code = item.to_ir(ctx);
+            ir_code.push_str(&item_code);
 
+            if is_terminated(&item_code) {
+                break;
+            }
+        }
+
+        println!("{}", serde_json::to_string_pretty(&ctx).unwrap());
         ctx.exit_scope();
+
         ir_code
     }
 }
@@ -46,16 +68,151 @@ impl Block {
 impl Stmt {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            Stmt::Assign(l_val, exp) => {
+            Stmt::Matched(matched) => matched.to_ir(ctx),
+            Stmt::Unmatched(unmatched) => unmatched.to_ir(ctx),
+        }
+    }
+}
+
+impl MatchedStmt {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> String {
+        match self {
+            MatchedStmt::If(cond, then_body, else_body) => {
+                let mut code = String::new();
+                let (cond_code, cond_val) = cond.to_ir(ctx);
+                let then_label = ctx.next_then();
+                let else_label = ctx.next_else();
+                let end_label = ctx.next_end();
+
+                code.push_str(&cond_code);
+                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
+                    let temp = ctx.next_temp();
+                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
+                    temp
+                } else {
+                    cond_val
+                };
+                code.push_str(&format!(
+                    "  br {}, {}, {}\n",
+                    cond_val, then_label, else_label
+                ));
+
+                // then
+                code.push_str(&format!("{}:\n", then_label));
+                let then_code = then_body.to_ir(ctx);
+                code.push_str(&then_code);
+                if !is_terminated(&then_code) {
+                    code.push_str(&format!("  jump {}\n", end_label));
+                }
+
+                // else
+                code.push_str(&format!("{}:\n", else_label));
+                let else_code = else_body.to_ir(ctx);
+                code.push_str(&else_code);
+                if !is_terminated(&else_code) {
+                    code.push_str(&format!("  jump {}\n", end_label));
+                }
+
+                // end
+                code.push_str(&format!("{}:\n", end_label));
+                code
+            }
+
+            MatchedStmt::NonIf(stmt) => stmt.to_ir(ctx),
+        }
+    }
+}
+
+impl UnmatchedStmt {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> String {
+        match self {
+            UnmatchedStmt::Else(cond, then_body) => {
+                let mut code = String::new();
+                let (cond_code, cond_val) = cond.to_ir(ctx);
+                let then_label = ctx.next_then();
+                let end_label = ctx.next_end();
+
+                code.push_str(&cond_code);
+                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
+                    let temp = ctx.next_temp();
+                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
+                    temp
+                } else {
+                    cond_val
+                };
+                code.push_str(&format!(
+                    "  br {}, {}, {}\n",
+                    cond_val, then_label, end_label
+                ));
+
+                code.push_str(&format!("{}:\n", then_label));
+                let then_code = then_body.to_ir(ctx);
+                code.push_str(&then_code);
+                if !is_terminated(&then_code) {
+                    code.push_str(&format!("  jump {}\n", end_label));
+                }
+
+                code.push_str(&format!("{}:\n", end_label));
+                code
+            }
+
+            UnmatchedStmt::NonElse(cond, then_body, else_body) => {
+                let mut code = String::new();
+                let (cond_code, cond_val) = cond.to_ir(ctx);
+                let then_label = ctx.next_then();
+                let else_label = ctx.next_else();
+                let end_label = ctx.next_end();
+
+                code.push_str(&cond_code);
+                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
+                    let temp = ctx.next_temp();
+                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
+                    temp
+                } else {
+                    cond_val
+                };
+                code.push_str(&format!(
+                    "  br {}, {}, {}\n",
+                    cond_val, then_label, else_label
+                ));
+
+                // then
+                code.push_str(&format!("{}:\n", then_label));
+                let then_code = then_body.to_ir(ctx);
+                code.push_str(&then_code);
+                if !is_terminated(&then_code) {
+                    code.push_str(&format!("  jump {}\n", end_label));
+                }
+
+                // else
+                code.push_str(&format!("{}:\n", else_label));
+                let else_code = else_body.to_ir(ctx);
+                code.push_str(&else_code);
+                if !is_terminated(&else_code) {
+                    code.push_str(&format!("  jump {}\n", end_label));
+                }
+
+                // end
+                code.push_str(&format!("{}:\n", end_label));
+                code
+            }
+        }
+    }
+}
+
+impl NonIfStmt {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> String {
+        match self {
+            NonIfStmt::Assign(l_val, exp) => {
                 let (exp_code, exp_val) = exp.to_ir(ctx);
                 let var_name = l_val.to_ir(ctx);
                 format!("{}  store {}, {}\n", exp_code, exp_val, var_name)
             }
-            Stmt::Block(block) => {
+            NonIfStmt::Block(block) => {
                 let code = block.to_ir(ctx);
                 format!("{}", code)
             }
-            Stmt::Exp(exp) => {
+            NonIfStmt::Exp(exp) => {
                 if let Some(exp) = exp {
                     let (exp_code, _) = exp.to_ir(ctx);
                     exp_code
@@ -63,13 +220,13 @@ impl Stmt {
                     String::new()
                 }
             }
-            Stmt::Return(exp) => {
+            NonIfStmt::Return(exp) => {
                 if let Some(exp) = exp {
                     let (exp_code, exp_val_raw) = exp.to_ir(ctx);
                     let (load_code, exp_val) = ctx.load_if_needed(exp_val_raw);
-                    format!("{}{}  ret {}", exp_code, load_code, exp_val)
+                    format!("{}{}  ret {}\n", exp_code, load_code, exp_val)
                 } else {
-                    format!("  ret")
+                    format!("  ret\n")
                 }
             }
         }
@@ -345,20 +502,20 @@ impl LAndExp {
                 let r_nonzero = ctx.next_temp();
                 let dst = ctx.next_temp();
 
-                let code = format!(
-                    "{}{}{}{}  {} = ne {}, 0\n  {} = ne {}, 0\n  {} = and {}, {}\n",
-                    l_code,
-                    l_load_code,
-                    r_code,
-                    r_load_code,
-                    l_nonzero,
-                    l_val,
-                    r_nonzero,
-                    r_val,
-                    dst,
-                    l_nonzero,
-                    r_nonzero
-                );
+                let mut code = String::new();
+
+                // 拼接左右表达式的 IR 代码
+                code.push_str(&l_code);
+                code.push_str(&l_load_code);
+                code.push_str(&r_code);
+                code.push_str(&r_load_code);
+
+                // 判断是否为非零（相当于布尔值）
+                code.push_str(&format!("  {} = ne {}, 0\n", l_nonzero, l_val));
+                code.push_str(&format!("  {} = ne {}, 0\n", r_nonzero, r_val));
+
+                // 逻辑与运算
+                code.push_str(&format!("  {} = and {}, {}\n", dst, l_nonzero, r_nonzero));
 
                 (code, dst)
             }
@@ -400,20 +557,20 @@ impl LOrExp {
                 let r_nonzero = ctx.next_temp();
                 let dst = ctx.next_temp();
 
-                let code = format!(
-                    "{}{}{}{}  {} = ne {}, 0\n  {} = ne {}, 0\n  {} = or {}, {}\n",
-                    l_code,
-                    l_load_code,
-                    r_code,
-                    r_load_code,
-                    l_nonzero,
-                    l_val,
-                    r_nonzero,
-                    r_val,
-                    dst,
-                    l_nonzero,
-                    r_nonzero
-                );
+                let mut code = String::new();
+
+                // 拼接左值与右值的表达式代码
+                code.push_str(&l_code);
+                code.push_str(&l_load_code);
+                code.push_str(&r_code);
+                code.push_str(&r_load_code);
+
+                // 生成非零判断的中间指令
+                code.push_str(&format!("  {} = ne {}, 0\n", l_nonzero, l_val));
+                code.push_str(&format!("  {} = ne {}, 0\n", r_nonzero, r_val));
+
+                // 生成逻辑或运算
+                code.push_str(&format!("  {} = or {}, {}\n", dst, l_nonzero, r_nonzero));
 
                 (code, dst)
             }

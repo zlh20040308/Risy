@@ -11,6 +11,9 @@ pub enum SymbolValue {
 #[derive(Debug, Clone, Serialize)]
 pub struct IrContext {
     temp_counter: usize,
+    then_counter: usize,
+    else_counter: usize,
+    end_counter: usize,
     named_counter: HashMap<String, usize>,
     pub symbol_table: Vec<HashMap<String, SymbolValue>>,
 }
@@ -19,6 +22,9 @@ impl IrContext {
     pub fn new() -> Self {
         Self {
             temp_counter: 0,
+            then_counter: 0,
+            else_counter: 0,
+            end_counter: 0,
             named_counter: HashMap::new(),
             symbol_table: vec![HashMap::new()],
         }
@@ -28,6 +34,24 @@ impl IrContext {
         let name = format!("%{}", self.temp_counter);
         self.temp_counter += 1;
         name
+    }
+
+    pub fn next_then(&mut self) -> String {
+        let label = format!("%then_{}", self.then_counter);
+        self.then_counter += 1;
+        label
+    }
+
+    pub fn next_end(&mut self) -> String {
+        let label = format!("%end_{}", self.end_counter);
+        self.end_counter += 1;
+        label
+    }
+
+    pub fn next_else(&mut self) -> String {
+        let label = format!("%else_{}", self.else_counter);
+        self.else_counter += 1;
+        label
     }
 
     pub fn generate_named(&mut self, name: &str) -> String {
