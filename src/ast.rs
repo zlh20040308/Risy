@@ -25,28 +25,32 @@ pub struct Block {
 
 #[derive(Debug, Clone, Serialize)]
 pub enum Stmt {
-    Matched(Box<MatchedStmt>),
-    Unmatched(Box<UnmatchedStmt>),
+    Open(Box<OpenStmt>),
+    Closed(Box<ClosedStmt>),
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub enum MatchedStmt {
-    If(Box<Exp>, Box<MatchedStmt>, Box<MatchedStmt>),
-    NonIf(Box<NonIfStmt>),
+pub enum OpenStmt {
+    If(Box<Exp>, Box<Stmt>),
+    Else(Box<Exp>, Box<ClosedStmt>, Box<OpenStmt>),
+    While(Box<Exp>, Box<OpenStmt>),
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub enum UnmatchedStmt {
-    Else(Box<Exp>, Box<Stmt>),
-    NonElse(Box<Exp>, Box<MatchedStmt>, Box<UnmatchedStmt>),
+pub enum ClosedStmt {
+    Simple(Box<SimpleStmt>),
+    Else(Box<Exp>, Box<ClosedStmt>, Box<ClosedStmt>),
+    While(Box<Exp>, Box<ClosedStmt>),
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub enum NonIfStmt {
+pub enum SimpleStmt {
     Assign(Box<LVal>, Box<Exp>),
-    Exp(Option<Box<Exp>>),
-    Block(Box<Block>),
+    Eval(Option<Box<Exp>>),
     Return(Option<Box<Exp>>),
+    Break,
+    Continue,
+    Block(Box<Block>),
 }
 
 #[derive(Debug, Clone, Serialize)]

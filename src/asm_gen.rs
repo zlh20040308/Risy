@@ -1,6 +1,6 @@
 // src/asm_gen.rs
 use koopa::ir::{BasicBlock, BinaryOp, FunctionData, Program, Value, ValueKind};
-use std::{any::Any, collections::HashMap};
+use std::collections::HashMap;
 
 struct RegAllocator {
     pool: Vec<String>, // 可用寄存器池
@@ -275,10 +275,6 @@ impl GenerateAsm for FunctionData {
                         asm.push_str(&format!("  sw {}, {}(sp)\n", temp, dest_offset));
                     }
                     ValueKind::Branch(branch) => {
-                        // # if 的条件判断部分
-                        // lw t0, 4(sp)
-                        // bnez t0, then
-                        // j else
                         let temp = reg_alloc.alloc();
                         let true_bb_label = label_table.get_or_assign(branch.true_bb());
                         let false_bb_label = label_table.get_or_assign(branch.false_bb());

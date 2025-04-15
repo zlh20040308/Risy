@@ -68,65 +68,16 @@ impl Block {
 impl Stmt {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            Stmt::Matched(matched) => matched.to_ir(ctx),
-            Stmt::Unmatched(unmatched) => unmatched.to_ir(ctx),
+            Stmt::Open(open) => open.to_ir(ctx),
+            Stmt::Closed(closed) => closed.to_ir(ctx),
         }
     }
 }
 
-impl MatchedStmt {
+impl OpenStmt {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            MatchedStmt::If(cond, then_body, else_body) => {
-                let mut code = String::new();
-                let (cond_code, cond_val) = cond.to_ir(ctx);
-                let then_label = ctx.next_then();
-                let else_label = ctx.next_else();
-                let end_label = ctx.next_end();
-
-                code.push_str(&cond_code);
-                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
-                    let temp = ctx.next_temp();
-                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
-                    temp
-                } else {
-                    cond_val
-                };
-                code.push_str(&format!(
-                    "  br {}, {}, {}\n",
-                    cond_val, then_label, else_label
-                ));
-
-                // then
-                code.push_str(&format!("{}:\n", then_label));
-                let then_code = then_body.to_ir(ctx);
-                code.push_str(&then_code);
-                if !is_terminated(&then_code) {
-                    code.push_str(&format!("  jump {}\n", end_label));
-                }
-
-                // else
-                code.push_str(&format!("{}:\n", else_label));
-                let else_code = else_body.to_ir(ctx);
-                code.push_str(&else_code);
-                if !is_terminated(&else_code) {
-                    code.push_str(&format!("  jump {}\n", end_label));
-                }
-
-                // end
-                code.push_str(&format!("{}:\n", end_label));
-                code
-            }
-
-            MatchedStmt::NonIf(stmt) => stmt.to_ir(ctx),
-        }
-    }
-}
-
-impl UnmatchedStmt {
-    pub fn to_ir(&self, ctx: &mut IrContext) -> String {
-        match self {
-            UnmatchedStmt::Else(cond, then_body) => {
+            OpenStmt::If(cond, then_stmt) => {
                 let mut code = String::new();
                 let (cond_code, cond_val) = cond.to_ir(ctx);
                 let then_label = ctx.next_then();
@@ -146,7 +97,7 @@ impl UnmatchedStmt {
                 ));
 
                 code.push_str(&format!("{}:\n", then_label));
-                let then_code = then_body.to_ir(ctx);
+                let then_code = then_stmt.to_ir(ctx);
                 code.push_str(&then_code);
                 if !is_terminated(&then_code) {
                     code.push_str(&format!("  jump {}\n", end_label));
@@ -155,8 +106,7 @@ impl UnmatchedStmt {
                 code.push_str(&format!("{}:\n", end_label));
                 code
             }
-
-            UnmatchedStmt::NonElse(cond, then_body, else_body) => {
+            OpenStmt::Else(cond, then_stmt, else_stmt) => {
                 let mut code = String::new();
                 let (cond_code, cond_val) = cond.to_ir(ctx);
                 let then_label = ctx.next_then();
@@ -178,7 +128,7 @@ impl UnmatchedStmt {
 
                 // then
                 code.push_str(&format!("{}:\n", then_label));
-                let then_code = then_body.to_ir(ctx);
+                let then_code = then_stmt.to_ir(ctx);
                 code.push_str(&then_code);
                 if !is_terminated(&then_code) {
                     code.push_str(&format!("  jump {}\n", end_label));
@@ -186,7 +136,7 @@ impl UnmatchedStmt {
 
                 // else
                 code.push_str(&format!("{}:\n", else_label));
-                let else_code = else_body.to_ir(ctx);
+                let else_code = else_stmt.to_ir(ctx);
                 code.push_str(&else_code);
                 if !is_terminated(&else_code) {
                     code.push_str(&format!("  jump {}\n", end_label));
@@ -196,23 +146,127 @@ impl UnmatchedStmt {
                 code.push_str(&format!("{}:\n", end_label));
                 code
             }
+            OpenStmt::While(cond, body) => {
+                let mut code = String::new();
+                let entry_label = ctx.next_while_entry();
+                let body_label = ctx.next_while_body();
+                let end_label = ctx.next_end();
+                ctx.enter_loop(entry_label.clone(), end_label.clone());
+                code.push_str(&format!("  jump {}\n", entry_label));
+                code.push_str(&format!("{}:\n", entry_label));
+                let (cond_code, cond_val) = cond.to_ir(ctx);
+                code.push_str(&cond_code);
+                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
+                    let temp = ctx.next_temp();
+                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
+                    temp
+                } else {
+                    cond_val
+                };
+                code.push_str(&format!(
+                    "  br {}, {}, {}\n",
+                    cond_val, body_label, end_label
+                ));
+                code.push_str(&format!("{}:\n", body_label));
+                let body_code = body.to_ir(ctx);
+                code.push_str(&body_code);
+                code.push_str(&format!("  jump {}\n", entry_label));
+                // end
+                code.push_str(&format!("{}:\n", end_label));
+                ctx.exit_loop();
+                code
+            }
         }
     }
 }
 
-impl NonIfStmt {
+impl ClosedStmt {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            NonIfStmt::Assign(l_val, exp) => {
+            ClosedStmt::Else(cond, then_stmt, else_stmt) => {
+                let mut code = String::new();
+                let (cond_code, cond_val) = cond.to_ir(ctx);
+                let then_label = ctx.next_then();
+                let else_label = ctx.next_else();
+                let end_label = ctx.next_end();
+
+                code.push_str(&cond_code);
+                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
+                    let temp = ctx.next_temp();
+                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
+                    temp
+                } else {
+                    cond_val
+                };
+                code.push_str(&format!(
+                    "  br {}, {}, {}\n",
+                    cond_val, then_label, else_label
+                ));
+
+                // then
+                code.push_str(&format!("{}:\n", then_label));
+                let then_code = then_stmt.to_ir(ctx);
+                code.push_str(&then_code);
+                if !is_terminated(&then_code) {
+                    code.push_str(&format!("  jump {}\n", end_label));
+                }
+
+                // else
+                code.push_str(&format!("{}:\n", else_label));
+                let else_code = else_stmt.to_ir(ctx);
+                code.push_str(&else_code);
+                if !is_terminated(&else_code) {
+                    code.push_str(&format!("  jump {}\n", end_label));
+                }
+
+                // end
+                code.push_str(&format!("{}:\n", end_label));
+                code
+            }
+            ClosedStmt::Simple(stmt) => stmt.to_ir(ctx),
+            ClosedStmt::While(cond, body) => {
+                let mut code = String::new();
+                let entry_label = ctx.next_while_entry();
+                let body_label = ctx.next_while_body();
+                let end_label = ctx.next_end();
+                ctx.enter_loop(entry_label.clone(), end_label.clone());
+                code.push_str(&format!("  jump {}\n", entry_label));
+                code.push_str(&format!("{}:\n", entry_label));
+                let (cond_code, cond_val) = cond.to_ir(ctx);
+                code.push_str(&cond_code);
+                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
+                    let temp = ctx.next_temp();
+                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
+                    temp
+                } else {
+                    cond_val
+                };
+                code.push_str(&format!(
+                    "  br {}, {}, {}\n",
+                    cond_val, body_label, end_label
+                ));
+                code.push_str(&format!("{}:\n", body_label));
+                let body_code = body.to_ir(ctx);
+                code.push_str(&body_code);
+                code.push_str(&format!("  jump {}\n", entry_label));
+                // end
+                code.push_str(&format!("{}:\n", end_label));
+                ctx.exit_loop();
+                code
+            }
+        }
+    }
+}
+
+impl SimpleStmt {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> String {
+        match self {
+            SimpleStmt::Assign(l_val, exp) => {
                 let (exp_code, exp_val) = exp.to_ir(ctx);
                 let var_name = l_val.to_ir(ctx);
                 format!("{}  store {}, {}\n", exp_code, exp_val, var_name)
             }
-            NonIfStmt::Block(block) => {
-                let code = block.to_ir(ctx);
-                format!("{}", code)
-            }
-            NonIfStmt::Exp(exp) => {
+            SimpleStmt::Eval(exp) => {
                 if let Some(exp) = exp {
                     let (exp_code, _) = exp.to_ir(ctx);
                     exp_code
@@ -220,7 +274,15 @@ impl NonIfStmt {
                     String::new()
                 }
             }
-            NonIfStmt::Return(exp) => {
+            SimpleStmt::Break => {
+                let label = ctx.current_loop_labels().unwrap().exit.clone();
+                format!("  jump {}\n", label)
+            }
+            SimpleStmt::Continue => {
+                let label = ctx.current_loop_labels().unwrap().entry.clone();
+                format!("  jump {}\n", label)
+            }
+            SimpleStmt::Return(exp) => {
                 if let Some(exp) = exp {
                     let (exp_code, exp_val_raw) = exp.to_ir(ctx);
                     let (load_code, exp_val) = ctx.load_if_needed(exp_val_raw);
@@ -228,6 +290,10 @@ impl NonIfStmt {
                 } else {
                     format!("  ret\n")
                 }
+            }
+            SimpleStmt::Block(block) => {
+                let code = block.to_ir(ctx);
+                format!("{}", code)
             }
         }
     }

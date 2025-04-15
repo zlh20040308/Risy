@@ -27,35 +27,30 @@ FuncType: FuncType = "int" => FuncType::Int;
 // Block         ::= "{" {BlockItem} "}";
 Block: Box<Block> = "{" <block_items: BlockItem*> "}" => Box::new(Block { <> });
 
-// Stmt    ::= MatchedStmt | UnmatchedStmt;
 Stmt: Box<Stmt> = {
-    MatchedStmt   => Box::new(Stmt::Matched(<>)),
-    UnmatchedStmt => Box::new(Stmt::Unmatched(<>))
+    OpenStmt   => Box::new(Stmt::Open(<>)),
+    ClosedStmt => Box::new(Stmt::Closed(<>)),
 };
 
-// MatchedStmt  ::= "if" "(" Exp ")" MatchedStmt "else" MatchedStmt 
-//                | NonIfStmt
-MatchedStmt: Box<MatchedStmt> = {
-    "if" "(" <Exp> ")" <MatchedStmt> "else" <MatchedStmt> => Box::new(MatchedStmt::If(<>)),
-    NonIfStmt                                             => Box::new(MatchedStmt::NonIf(<>))
+OpenStmt: Box<OpenStmt> = {
+    "if" "(" <Exp> ")" <Stmt>                         => Box::new(OpenStmt::If(<>)),
+    "if" "(" <Exp> ")" <ClosedStmt> "else" <OpenStmt> => Box::new(OpenStmt::Else(<>)),
+    "while" "(" <Exp> ")" <OpenStmt>                  => Box::new(OpenStmt::While(<>)),
 };
 
-// UnmatchedStmt  ::= "if" "(" Exp ")" Stmt 
-//                  | "if" "(" Exp ")" MatchedStmt "else" UnmatchedStmt 
-UnmatchedStmt: Box<UnmatchedStmt> = {
-    "if" "(" <Exp> ")" <Stmt>                               => Box::new(UnmatchedStmt::Else(<>)),
-    "if" "(" <Exp> ")" <MatchedStmt> "else" <UnmatchedStmt> => Box::new(UnmatchedStmt::NonElse(<>))
+ClosedStmt: Box<ClosedStmt> = {
+    SimpleStmt                                          => Box::new(ClosedStmt::Simple(<>)),
+    "if" "(" <Exp> ")" <ClosedStmt> "else" <ClosedStmt> => Box::new(ClosedStmt::Else(<>)),
+    "while" "(" <Exp> ")" <ClosedStmt>                  => Box::new(ClosedStmt::While(<>)),
 };
 
-// NonIfStmt    ::= LVal "=" Exp ";"
-//                | [Exp] ";"
-//                | Block
-//                | "return" [Exp] ";";
-NonIfStmt: Box<NonIfStmt> = {
-    <LVal> "=" <Exp> ";" => Box::new(NonIfStmt::Assign(<>)),
-    <Exp?> ";"           => Box::new(NonIfStmt::Exp(<>)),
-    Block                => Box::new(NonIfStmt::Block(<>)),
-    "return" <Exp?> ";"  => Box::new(NonIfStmt::Return(<>)),
+SimpleStmt: Box<SimpleStmt> = {
+    <LVal> "=" <Exp> ";" => Box::new(SimpleStmt::Assign(<>)),
+    <Exp?> ";"           => Box::new(SimpleStmt::Eval(<>)),
+    Block                => Box::new(SimpleStmt::Block(<>)),
+    "break" ";"          => Box::new(SimpleStmt::Break),
+    "continue" ";"       => Box::new(SimpleStmt::Continue),
+    "return" <Exp?> ";"  => Box::new(SimpleStmt::Return(<>)),
 };
 
 Exp: Box<Exp> = <lor_exp: LOrExp> => Box::new(Exp { <> });

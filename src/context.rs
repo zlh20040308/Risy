@@ -9,13 +9,22 @@ pub enum SymbolValue {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct LoopLabels {
+    pub entry: String, // continue 的目标
+    pub exit: String,  // break 的目标
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct IrContext {
     temp_counter: usize,
     then_counter: usize,
     else_counter: usize,
+    while_entry_counter: usize,
+    while_body_counter: usize,
     end_counter: usize,
     named_counter: HashMap<String, usize>,
-    pub symbol_table: Vec<HashMap<String, SymbolValue>>,
+    symbol_table: Vec<HashMap<String, SymbolValue>>,
+    loop_stack: Vec<LoopLabels>,
 }
 
 impl IrContext {
@@ -24,9 +33,12 @@ impl IrContext {
             temp_counter: 0,
             then_counter: 0,
             else_counter: 0,
+            while_entry_counter: 0,
+            while_body_counter: 0,
             end_counter: 0,
             named_counter: HashMap::new(),
             symbol_table: vec![HashMap::new()],
+            loop_stack: vec![],
         }
     }
 
@@ -51,6 +63,18 @@ impl IrContext {
     pub fn next_else(&mut self) -> String {
         let label = format!("%else_{}", self.else_counter);
         self.else_counter += 1;
+        label
+    }
+
+    pub fn next_while_entry(&mut self) -> String {
+        let label = format!("%while_entry_{}", self.while_entry_counter);
+        self.while_entry_counter += 1;
+        label
+    }
+
+    pub fn next_while_body(&mut self) -> String {
+        let label = format!("%while_body_{}", self.while_body_counter);
+        self.while_body_counter += 1;
         label
     }
 
@@ -104,5 +128,17 @@ impl IrContext {
         } else {
             (String::new(), val)
         }
+    }
+
+    pub fn enter_loop(&mut self, entry: String, exit: String) {
+        self.loop_stack.push(LoopLabels { entry, exit });
+    }
+
+    pub fn exit_loop(&mut self) {
+        self.loop_stack.pop();
+    }
+
+    pub fn current_loop_labels(&self) -> Option<&LoopLabels> {
+        self.loop_stack.last()
     }
 }
