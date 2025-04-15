@@ -14,18 +14,53 @@ match {
     _
 }
 
-pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { <> };
-
-FuncDef: Box<FuncDef> = {
-    <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => {
-        Box::new(FuncDef { <> })
-    }
-}
-
-FuncType: FuncType = "int" => FuncType::Int;
+// CompUnit    ::= [CompUnit] FuncDef;
+pub CompUnit: Box<CompUnit> = <comp_unit: CompUnit?> <func_def: FuncDef> => Box::new(CompUnit { <> });
 
 // Block         ::= "{" {BlockItem} "}";
 Block: Box<Block> = "{" <block_items: BlockItem*> "}" => Box::new(Block { <> });
+
+// FuncDef     ::= FuncType IDENT "(" [FuncFParams] ")" Block;
+FuncDef: Box<FuncDef> = {
+    <func_type: FuncType> <ident: Ident> "(" <func_formal_params: FuncFParams?> ")" <block: Block> => {
+        Box::new(FuncDef { <> })
+    }
+};
+
+// FuncType    ::= "void" | "int";
+FuncType: FuncType = {
+    "void" => FuncType::Void,
+    "int"  => FuncType::Int,
+};
+
+// FuncFParams ::= FuncFParam {"," FuncFParam};
+FuncFParams: Box<FuncFParams> = {
+    <first_fparam: FuncFParam> <rest_fparams: ("," <FuncFParam>)*> => {
+        let mut func_fparams = vec![first_fparam];
+        for fparam in rest_fparams {
+            func_fparams.push(fparam);
+        }
+        Box::new(FuncFParams {
+            func_fparams,
+        })
+    }
+};
+
+// FuncFParam  ::= BType IDENT;
+FuncFParam: Box<FuncFParam> = <btype: BType> <ident: Ident> => Box::new(FuncFParam { <> });
+
+// FuncRParams ::= Exp {"," Exp};
+FuncRParams: Box<FuncRParams> = {
+    <first_exp: Exp> <rest_exps: ("," <Exp>)*> => {
+        let mut args = vec![first_exp];
+        for exp in rest_exps {
+            args.push(exp);
+        }
+        Box::new(FuncRParams {
+            args,
+        })
+    }
+};
 
 Stmt: Box<Stmt> = {
     OpenStmt   => Box::new(Stmt::Open(<>)),
@@ -161,8 +196,9 @@ PrimaryExp: Box<PrimaryExp> = {
 };
 
 UnaryExp: Box<UnaryExp> = {
-    PrimaryExp       => Box::new(UnaryExp::Primary(<>)),
-    UnaryOp UnaryExp => Box::new(UnaryExp::UnaryOp(<>)),
+    PrimaryExp                     => Box::new(UnaryExp::Primary(<>)),
+    <Ident> "(" <FuncRParams?> ")" => Box::new(UnaryExp::Call(<>)),
+    UnaryOp UnaryExp               => Box::new(UnaryExp::UnaryOp(<>)),
 };
 
 AddOp: BinOp = {

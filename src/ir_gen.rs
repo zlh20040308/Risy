@@ -27,7 +27,7 @@ impl FuncDef {
         let body = self.block.to_ir(ctx);
         let mut code = String::new();
         code.push_str(&format!(
-            "fun @{}(): {} {{\n",
+            "fun @{}(){}{{\n",
             self.ident,
             self.func_type.to_ir()
         ));
@@ -40,14 +40,16 @@ impl FuncDef {
 
 impl FuncType {
     pub fn to_ir(&self) -> &'static str {
-        "i32"
+        match self {
+            FuncType::Int => ": i32 ",
+            FuncType::Void => " ",
+        }
     }
 }
 
 impl Block {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         ctx.enter_scope();
-
         let mut ir_code = String::new();
         for item in &self.block_items {
             let item_code = item.to_ir(ctx);
@@ -57,10 +59,8 @@ impl Block {
                 break;
             }
         }
-
         println!("{}", serde_json::to_string_pretty(&ctx).unwrap());
         ctx.exit_scope();
-
         ir_code
     }
 }
@@ -80,9 +80,8 @@ impl OpenStmt {
             OpenStmt::If(cond, then_stmt) => {
                 let mut code = String::new();
                 let (cond_code, cond_val) = cond.to_ir(ctx);
-                let then_label = ctx.next_then();
-                let end_label = ctx.next_end();
-
+                let then_label = ctx.generate_label("then");
+                let end_label = ctx.generate_label("end");
                 code.push_str(&cond_code);
                 let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
                     let temp = ctx.next_temp();
@@ -95,24 +94,21 @@ impl OpenStmt {
                     "  br {}, {}, {}\n",
                     cond_val, then_label, end_label
                 ));
-
                 code.push_str(&format!("{}:\n", then_label));
                 let then_code = then_stmt.to_ir(ctx);
                 code.push_str(&then_code);
                 if !is_terminated(&then_code) {
                     code.push_str(&format!("  jump {}\n", end_label));
                 }
-
                 code.push_str(&format!("{}:\n", end_label));
                 code
             }
             OpenStmt::Else(cond, then_stmt, else_stmt) => {
                 let mut code = String::new();
                 let (cond_code, cond_val) = cond.to_ir(ctx);
-                let then_label = ctx.next_then();
-                let else_label = ctx.next_else();
-                let end_label = ctx.next_end();
-
+                let then_label = ctx.generate_label("then");
+                let else_label = ctx.generate_label("else");
+                let end_label = ctx.generate_label("end");
                 code.push_str(&cond_code);
                 let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
                     let temp = ctx.next_temp();
@@ -125,7 +121,6 @@ impl OpenStmt {
                     "  br {}, {}, {}\n",
                     cond_val, then_label, else_label
                 ));
-
                 // then
                 code.push_str(&format!("{}:\n", then_label));
                 let then_code = then_stmt.to_ir(ctx);
@@ -133,7 +128,6 @@ impl OpenStmt {
                 if !is_terminated(&then_code) {
                     code.push_str(&format!("  jump {}\n", end_label));
                 }
-
                 // else
                 code.push_str(&format!("{}:\n", else_label));
                 let else_code = else_stmt.to_ir(ctx);
@@ -141,16 +135,15 @@ impl OpenStmt {
                 if !is_terminated(&else_code) {
                     code.push_str(&format!("  jump {}\n", end_label));
                 }
-
                 // end
                 code.push_str(&format!("{}:\n", end_label));
                 code
             }
             OpenStmt::While(cond, body) => {
                 let mut code = String::new();
-                let entry_label = ctx.next_while_entry();
-                let body_label = ctx.next_while_body();
-                let end_label = ctx.next_end();
+                let entry_label = ctx.generate_label("while_entry");
+                let body_label = ctx.generate_label("while_body");
+                let end_label = ctx.generate_label("end");
                 ctx.enter_loop(entry_label.clone(), end_label.clone());
                 code.push_str(&format!("  jump {}\n", entry_label));
                 code.push_str(&format!("{}:\n", entry_label));
@@ -186,10 +179,9 @@ impl ClosedStmt {
             ClosedStmt::Else(cond, then_stmt, else_stmt) => {
                 let mut code = String::new();
                 let (cond_code, cond_val) = cond.to_ir(ctx);
-                let then_label = ctx.next_then();
-                let else_label = ctx.next_else();
-                let end_label = ctx.next_end();
-
+                let then_label = ctx.generate_label("then");
+                let else_label = ctx.generate_label("else");
+                let end_label = ctx.generate_label("end");
                 code.push_str(&cond_code);
                 let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
                     let temp = ctx.next_temp();
@@ -202,7 +194,6 @@ impl ClosedStmt {
                     "  br {}, {}, {}\n",
                     cond_val, then_label, else_label
                 ));
-
                 // then
                 code.push_str(&format!("{}:\n", then_label));
                 let then_code = then_stmt.to_ir(ctx);
@@ -210,7 +201,6 @@ impl ClosedStmt {
                 if !is_terminated(&then_code) {
                     code.push_str(&format!("  jump {}\n", end_label));
                 }
-
                 // else
                 code.push_str(&format!("{}:\n", else_label));
                 let else_code = else_stmt.to_ir(ctx);
@@ -218,7 +208,6 @@ impl ClosedStmt {
                 if !is_terminated(&else_code) {
                     code.push_str(&format!("  jump {}\n", end_label));
                 }
-
                 // end
                 code.push_str(&format!("{}:\n", end_label));
                 code
@@ -226,9 +215,9 @@ impl ClosedStmt {
             ClosedStmt::Simple(stmt) => stmt.to_ir(ctx),
             ClosedStmt::While(cond, body) => {
                 let mut code = String::new();
-                let entry_label = ctx.next_while_entry();
-                let body_label = ctx.next_while_body();
-                let end_label = ctx.next_end();
+                let entry_label = ctx.generate_label("while_entry");
+                let body_label = ctx.generate_label("while_body");
+                let end_label = ctx.generate_label("end");
                 ctx.enter_loop(entry_label.clone(), end_label.clone());
                 code.push_str(&format!("  jump {}\n", entry_label));
                 code.push_str(&format!("{}:\n", entry_label));
@@ -261,10 +250,13 @@ impl ClosedStmt {
 impl SimpleStmt {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            SimpleStmt::Assign(l_val, exp) => {
+            SimpleStmt::Assign(lval, exp) => {
                 let (exp_code, exp_val) = exp.to_ir(ctx);
-                let var_name = l_val.to_ir(ctx);
-                format!("{}  store {}, {}\n", exp_code, exp_val, var_name)
+                if let SymbolValue::Var(ir_name) = ctx.lookup(&lval.ident).unwrap() {
+                    format!("{}  store {}, {}\n", exp_code, exp_val, ir_name)
+                } else {
+                    panic!("LVal is not a Var")
+                }
             }
             SimpleStmt::Eval(exp) => {
                 if let Some(exp) = exp {
@@ -284,9 +276,8 @@ impl SimpleStmt {
             }
             SimpleStmt::Return(exp) => {
                 if let Some(exp) = exp {
-                    let (exp_code, exp_val_raw) = exp.to_ir(ctx);
-                    let (load_code, exp_val) = ctx.load_if_needed(exp_val_raw);
-                    format!("{}{}  ret {}\n", exp_code, load_code, exp_val)
+                    let (exp_code, exp_val) = exp.to_ir(ctx);
+                    format!("{}  ret {}\n", exp_code, exp_val)
                 } else {
                     format!("  ret\n")
                 }
@@ -380,7 +371,7 @@ impl ConstInitVal {
 impl LVal {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match ctx.lookup(&self.ident) {
-            Some(SymbolValue::Const(val)) => Ok(*val),
+            Some(SymbolValue::Const(val)) => Ok(val),
             Some(SymbolValue::Var(_)) => Err(format!(
                 "Cannot evaluate variable '{}' at compile-time",
                 self.ident
@@ -392,10 +383,18 @@ impl LVal {
         }
     }
 
-    pub fn to_ir(&self, ctx: &mut IrContext) -> String {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
         match ctx.lookup(&self.ident) {
-            Some(SymbolValue::Var(ir_name)) => ir_name.clone(),
-            Some(SymbolValue::Const(value)) => value.to_string(),
+            Some(SymbolValue::Var(ir_name)) => {
+                let temp = ctx.next_temp();
+                let code = format!("  {} = load {}\n", temp, ir_name);
+                (code, temp)
+            }
+            Some(SymbolValue::Const(value)) => {
+                let temp = ctx.next_temp();
+                let code = format!("  {} = add 0, {}\n", temp, value);
+                (code, temp)
+            }
             None => panic!("Identifier '{}' not found", self.ident),
         }
     }
@@ -443,25 +442,8 @@ impl RelExp {
         match self {
             RelExp::AddExp(add) => add.to_ir(ctx),
             RelExp::Rel(lhs, op, rhs) => {
-                let (l_code, l_val_raw) = lhs.to_ir(ctx);
-                let (r_code, r_val_raw) = rhs.to_ir(ctx);
-
-                let (l_load_code, l_val) = ctx.load_if_needed(l_val_raw);
-                let (r_load_code, r_val) = ctx.load_if_needed(r_val_raw);
-
-                if let (Ok(l_num), Ok(r_num)) = (l_val.parse::<i32>(), r_val.parse::<i32>()) {
-                    let result = match op {
-                        RelOp::Less => l_num < r_num,
-                        RelOp::Greater => l_num > r_num,
-                        RelOp::LessEq => l_num <= r_num,
-                        RelOp::GreaterEq => l_num >= r_num,
-                    };
-                    return (
-                        format!("{}{}{}{}", l_code, l_load_code, r_code, r_load_code),
-                        (result as i32).to_string(),
-                    );
-                }
-
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
                 let dst = ctx.next_temp();
                 let inst = match op {
                     RelOp::Less => format!("  {} = lt {}, {}", dst, l_val, r_val),
@@ -469,13 +451,7 @@ impl RelExp {
                     RelOp::LessEq => format!("  {} = le {}, {}", dst, l_val, r_val),
                     RelOp::GreaterEq => format!("  {} = ge {}, {}", dst, l_val, r_val),
                 };
-                (
-                    format!(
-                        "{}{}{}{}{}\n",
-                        l_code, l_load_code, r_code, r_load_code, inst
-                    ),
-                    dst,
-                )
+                (format!("{}{}{}\n", l_code, r_code, inst), dst)
             }
         }
     }
@@ -499,35 +475,14 @@ impl EqExp {
         match self {
             EqExp::RelExp(rel) => rel.to_ir(ctx),
             EqExp::Eq(lhs, op, rhs) => {
-                let (l_code, l_val_raw) = lhs.to_ir(ctx);
-                let (r_code, r_val_raw) = rhs.to_ir(ctx);
-
-                let (l_load_code, l_val) = ctx.load_if_needed(l_val_raw);
-                let (r_load_code, r_val) = ctx.load_if_needed(r_val_raw);
-
-                if let (Ok(l_num), Ok(r_num)) = (l_val.parse::<i32>(), r_val.parse::<i32>()) {
-                    let result = match op {
-                        EqOp::Equal => (l_num == r_num) as i32,
-                        EqOp::NotEqual => (l_num != r_num) as i32,
-                    };
-                    return (
-                        format!("{}{}{}{}", l_code, l_load_code, r_code, r_load_code),
-                        result.to_string(),
-                    );
-                }
-
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
                 let dst = ctx.next_temp();
                 let inst = match op {
                     EqOp::Equal => format!("  {} = eq {}, {}", dst, l_val, r_val),
                     EqOp::NotEqual => format!("  {} = ne {}, {}", dst, l_val, r_val),
                 };
-                (
-                    format!(
-                        "{}{}{}{}{}\n",
-                        l_code, l_load_code, r_code, r_load_code, inst
-                    ),
-                    dst,
-                )
+                (format!("{}{}{}\n", l_code, r_code, inst), dst)
             }
         }
     }
@@ -540,49 +495,41 @@ impl LAndExp {
             LAndExp::EqExp(eq) => eq.eval(ctx),
             LAndExp::LAnd(lhs, rhs) => {
                 let lval = lhs.eval(ctx)?;
+                if lval == 0 {
+                    return Ok(0); // 短路，直接返回
+                }
                 let rval = rhs.eval(ctx)?;
-                Ok(if lval != 0 && rval != 0 { 1 } else { 0 })
+                Ok(if rval != 0 { 1 } else { 0 })
             }
         }
     }
     pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
         match self {
             LAndExp::EqExp(eq) => eq.to_ir(ctx),
-
             LAndExp::LAnd(lhs, rhs) => {
-                let (l_code, l_val_raw) = lhs.to_ir(ctx);
-                let (r_code, r_val_raw) = rhs.to_ir(ctx);
-
-                let (l_load_code, l_val) = ctx.load_if_needed(l_val_raw);
-                let (r_load_code, r_val) = ctx.load_if_needed(r_val_raw);
-
-                if let (Ok(l_num), Ok(r_num)) = (l_val.parse::<i32>(), r_val.parse::<i32>()) {
-                    let result = if (l_num != 0) && (r_num != 0) { 1 } else { 0 };
-                    return (
-                        format!("{}{}{}{}", l_code, l_load_code, r_code, r_load_code),
-                        result.to_string(),
-                    );
-                }
-
-                let l_nonzero = ctx.next_temp();
-                let r_nonzero = ctx.next_temp();
-                let dst = ctx.next_temp();
-
+                let result = ctx.next_temp();
                 let mut code = String::new();
-
-                // 拼接左右表达式的 IR 代码
-                code.push_str(&l_code);
-                code.push_str(&l_load_code);
-                code.push_str(&r_code);
-                code.push_str(&r_load_code);
-
-                // 判断是否为非零（相当于布尔值）
-                code.push_str(&format!("  {} = ne {}, 0\n", l_nonzero, l_val));
-                code.push_str(&format!("  {} = ne {}, 0\n", r_nonzero, r_val));
-
-                // 逻辑与运算
-                code.push_str(&format!("  {} = and {}, {}\n", dst, l_nonzero, r_nonzero));
-
+                code.push_str(&format!("  {} = alloc i32\n", result));
+                code.push_str(&format!("  store 0, {}\n", result));
+                let (lhs_code, lhs_val) = lhs.to_ir(ctx);
+                code.push_str(&lhs_code);
+                let rhs_label = ctx.generate_label("rhs_label");
+                let true_label = ctx.generate_label("true_label");
+                let end_label = ctx.generate_label("end_label");
+                code.push_str(&format!("  br {}, {}, {}\n", lhs_val, rhs_label, end_label));
+                code.push_str(&format!("{}:\n", rhs_label));
+                let (rhs_code, rhs_val) = rhs.to_ir(ctx);
+                code.push_str(&rhs_code);
+                code.push_str(&format!(
+                    "  br {}, {}, {}\n",
+                    rhs_val, true_label, end_label
+                ));
+                code.push_str(&format!("{}:\n", true_label));
+                code.push_str(&format!("  store {}, {}\n", rhs_val, result));
+                code.push_str(&format!("  jump {}\n", end_label));
+                code.push_str(&format!("{}:\n", end_label));
+                let dst = ctx.next_temp();
+                code.push_str(&format!("  {} = load {}\n", dst, result));
                 (code, dst)
             }
         }
@@ -595,49 +542,41 @@ impl LOrExp {
             LOrExp::LAndExp(land) => land.eval(ctx),
             LOrExp::LOr(lhs, rhs) => {
                 let lval = lhs.eval(ctx)?;
+                if lval != 0 {
+                    return Ok(1); // 短路，直接返回
+                }
                 let rval = rhs.eval(ctx)?;
-                Ok(if lval != 0 || rval != 0 { 1 } else { 0 })
+                Ok(if rval != 0 { 1 } else { 0 })
             }
         }
     }
     pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
         match self {
             LOrExp::LAndExp(land) => land.to_ir(ctx),
-
             LOrExp::LOr(lhs, rhs) => {
-                let (l_code, l_val_raw) = lhs.to_ir(ctx);
-                let (r_code, r_val_raw) = rhs.to_ir(ctx);
-
-                let (l_load_code, l_val) = ctx.load_if_needed(l_val_raw);
-                let (r_load_code, r_val) = ctx.load_if_needed(r_val_raw);
-
-                if let (Ok(l_num), Ok(r_num)) = (l_val.parse::<i32>(), r_val.parse::<i32>()) {
-                    let result = if (l_num != 0) || (r_num != 0) { 1 } else { 0 };
-                    return (
-                        format!("{}{}{}{}", l_code, l_load_code, r_code, r_load_code),
-                        result.to_string(),
-                    );
-                }
-
-                let l_nonzero = ctx.next_temp();
-                let r_nonzero = ctx.next_temp();
-                let dst = ctx.next_temp();
-
+                let result = ctx.next_temp();
                 let mut code = String::new();
-
-                // 拼接左值与右值的表达式代码
-                code.push_str(&l_code);
-                code.push_str(&l_load_code);
-                code.push_str(&r_code);
-                code.push_str(&r_load_code);
-
-                // 生成非零判断的中间指令
-                code.push_str(&format!("  {} = ne {}, 0\n", l_nonzero, l_val));
-                code.push_str(&format!("  {} = ne {}, 0\n", r_nonzero, r_val));
-
-                // 生成逻辑或运算
-                code.push_str(&format!("  {} = or {}, {}\n", dst, l_nonzero, r_nonzero));
-
+                code.push_str(&format!("  {} = alloc i32\n", result));
+                code.push_str(&format!("  store 1, {}\n", result));
+                let (lhs_code, lhs_val) = lhs.to_ir(ctx);
+                code.push_str(&lhs_code);
+                let rhs_label = ctx.generate_label("rhs_label");
+                let true_label = ctx.generate_label("true_label");
+                let end_label = ctx.generate_label("end_label");
+                code.push_str(&format!("  br {}, {}, {}\n", lhs_val, end_label, rhs_label));
+                code.push_str(&format!("{}:\n", rhs_label));
+                let (rhs_code, rhs_val) = rhs.to_ir(ctx);
+                code.push_str(&rhs_code);
+                code.push_str(&format!(
+                    "  br {}, {}, {}\n",
+                    rhs_val, end_label, true_label
+                ));
+                code.push_str(&format!("{}:\n", true_label));
+                code.push_str(&format!("  store {}, {}\n", rhs_val, result));
+                code.push_str(&format!("  jump {}\n", end_label));
+                code.push_str(&format!("{}:\n", end_label));
+                let dst = ctx.next_temp();
+                code.push_str(&format!("  {} = load {}\n", dst, result));
                 (code, dst)
             }
         }
@@ -664,36 +603,15 @@ impl AddExp {
         match self {
             AddExp::MulExp(mul) => mul.to_ir(ctx),
             AddExp::Binary(lhs, op, rhs) => {
-                let (l_code, l_val_raw) = lhs.to_ir(ctx);
-                let (r_code, r_val_raw) = rhs.to_ir(ctx);
-
-                let (l_load, l_val) = ctx.load_if_needed(l_val_raw);
-                let (r_load, r_val) = ctx.load_if_needed(r_val_raw);
-
-                // 常数折叠
-                if let (Ok(l_num), Ok(r_num)) = (l_val.parse::<i32>(), r_val.parse::<i32>()) {
-                    let result = match op {
-                        BinOp::Add => l_num + r_num,
-                        BinOp::Minus => l_num - r_num,
-                        _ => unreachable!(),
-                    };
-                    return (
-                        format!("{}{}{}{}", l_code, l_load, r_code, r_load),
-                        result.to_string(),
-                    );
-                }
-
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
                 let dst = ctx.next_temp();
                 let inst = match op {
-                    BinOp::Add => format!("  {} = add {}, {}\n", dst, l_val, r_val),
-                    BinOp::Minus => format!("  {} = sub {}, {}\n", dst, l_val, r_val),
+                    BinOp::Add => format!("  {} = add {}, {}", dst, l_val, r_val),
+                    BinOp::Minus => format!("  {} = sub {}, {}", dst, l_val, r_val),
                     _ => panic!("unexpected binop in AddExp"),
                 };
-
-                (
-                    format!("{}{}{}{}{}", l_code, l_load, r_code, r_load, inst),
-                    dst,
-                )
+                (format!("{}{}{}\n", l_code, r_code, inst), dst)
             }
         }
     }
@@ -719,25 +637,8 @@ impl MulExp {
         match self {
             MulExp::Unary(u) => u.to_ir(ctx),
             MulExp::Binary(lhs, op, rhs) => {
-                let (l_code, l_val_raw) = lhs.to_ir(ctx);
-                let (r_code, r_val_raw) = rhs.to_ir(ctx);
-
-                let (l_load_code, l_val) = ctx.load_if_needed(l_val_raw);
-                let (r_load_code, r_val) = ctx.load_if_needed(r_val_raw);
-
-                if let (Ok(l_num), Ok(r_num)) = (l_val.parse::<i32>(), r_val.parse::<i32>()) {
-                    let result = match op {
-                        BinOp::Mul => l_num * r_num,
-                        BinOp::Div => l_num / r_num,
-                        BinOp::Mod => l_num % r_num,
-                        _ => unreachable!(),
-                    };
-                    return (
-                        format!("{}{}{}{}", l_code, l_load_code, r_code, r_load_code),
-                        result.to_string(),
-                    );
-                }
-
+                let (l_code, l_val) = lhs.to_ir(ctx);
+                let (r_code, r_val) = rhs.to_ir(ctx);
                 let dst = ctx.next_temp();
                 let inst = match op {
                     BinOp::Mul => format!("  {} = mul {}, {}", dst, l_val, r_val),
@@ -745,14 +646,7 @@ impl MulExp {
                     BinOp::Mod => format!("  {} = mod {}, {}", dst, l_val, r_val),
                     _ => panic!("unexpected binop in MulExp"),
                 };
-
-                (
-                    format!(
-                        "{}{}{}{}{}\n",
-                        l_code, l_load_code, r_code, r_load_code, inst
-                    ),
-                    dst,
-                )
+                (format!("{}{}{}\n", l_code, r_code, inst), dst)
             }
         }
     }
@@ -762,6 +656,9 @@ impl UnaryExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
             UnaryExp::Primary(primary) => primary.eval(ctx),
+            UnaryExp::Call(ident, args) => {
+                todo!()
+            }
             UnaryExp::UnaryOp(op, expr) => {
                 let val = expr.eval(ctx)?;
                 Ok(match op {
@@ -775,27 +672,26 @@ impl UnaryExp {
     pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
         match self {
             UnaryExp::Primary(p) => p.to_ir(ctx),
+            UnaryExp::Call(ident, args) => {
+                todo!()
+            }
             UnaryExp::UnaryOp(op, exp) => {
-                let (code, val_raw) = exp.to_ir(ctx);
-                if let Ok(num) = val_raw.parse::<i32>() {
-                    let result = match op {
-                        UnaryOp::Plus => num,
-                        UnaryOp::Minus => -num,
-                        UnaryOp::Not => (num == 0) as i32,
-                    };
-                    return (format!("{}\n", code), result.to_string());
+                let (exp_code, exp_val) = exp.to_ir(ctx);
+                let mut code = String::new();
+                code.push_str(&exp_code);
+                match op {
+                    UnaryOp::Plus => (code, exp_val),
+                    UnaryOp::Minus => {
+                        let temp = ctx.next_temp();
+                        code.push_str(&format!("  {} = sub 0, {}\n", temp, exp_val));
+                        (code, temp)
+                    }
+                    UnaryOp::Not => {
+                        let temp = ctx.next_temp();
+                        code.push_str(&format!("  {} = eq 0, {}\n", temp, exp_val));
+                        (code, temp)
+                    }
                 }
-
-                let (load_code, val) = ctx.load_if_needed(val_raw);
-
-                let dst = ctx.next_temp();
-                let inst = match op {
-                    UnaryOp::Plus => return (format!("{}{}", code, load_code), val),
-                    UnaryOp::Minus => format!("  {} = sub 0, {}", dst, val),
-                    UnaryOp::Not => format!("  {} = eq 0, {}", dst, val),
-                };
-
-                (format!("{}{}{}\n", code, load_code, inst), dst)
             }
         }
     }
@@ -811,8 +707,12 @@ impl PrimaryExp {
     }
     pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
         match self {
-            PrimaryExp::Number(n) => (String::new(), format!("{}", n)),
-            PrimaryExp::LVal(lval) => (String::new(), lval.to_ir(ctx)),
+            PrimaryExp::Number(n) => {
+                let temp = ctx.next_temp();
+                let code = format!("  {} = add 0, {}\n", temp.clone(), n);
+                (code, temp)
+            }
+            PrimaryExp::LVal(lval) => lval.to_ir(ctx),
             PrimaryExp::Paren(inner) => inner.to_ir(ctx),
         }
     }

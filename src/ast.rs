@@ -3,6 +3,7 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CompUnit {
+    pub comp_unit: Option<Box<CompUnit>>,
     pub func_def: Box<FuncDef>,
 }
 
@@ -10,12 +11,30 @@ pub struct CompUnit {
 pub struct FuncDef {
     pub func_type: FuncType,
     pub ident: String,
+    pub func_formal_params: Option<Box<FuncFParams>>,
     pub block: Box<Block>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub enum FuncType {
+    Void,
     Int,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FuncFParams {
+    pub func_fparams: Vec<Box<FuncFParam>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FuncFParam {
+    pub btype: String,
+    pub ident: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FuncRParams {
+    pub args: Vec<Box<Exp>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -160,6 +179,7 @@ pub enum PrimaryExp {
 #[derive(Debug, Clone, Serialize)]
 pub enum UnaryExp {
     Primary(Box<PrimaryExp>),
+    Call(String, Option<Box<FuncRParams>>),
     UnaryOp(UnaryOp, Box<UnaryExp>),
 }
 
