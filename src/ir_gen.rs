@@ -149,13 +149,6 @@ impl OpenStmt {
                 code.push_str(&format!("{}:\n", entry_label));
                 let (cond_code, cond_val) = cond.to_ir(ctx);
                 code.push_str(&cond_code);
-                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
-                    let temp = ctx.next_temp();
-                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
-                    temp
-                } else {
-                    cond_val
-                };
                 code.push_str(&format!(
                     "  br {}, {}, {}\n",
                     cond_val, body_label, end_label
@@ -163,7 +156,9 @@ impl OpenStmt {
                 code.push_str(&format!("{}:\n", body_label));
                 let body_code = body.to_ir(ctx);
                 code.push_str(&body_code);
-                code.push_str(&format!("  jump {}\n", entry_label));
+                if !is_terminated(&code) {
+                    code.push_str(&format!("  jump {}\n", entry_label));
+                }
                 // end
                 code.push_str(&format!("{}:\n", end_label));
                 ctx.exit_loop();
@@ -220,24 +215,21 @@ impl ClosedStmt {
                 let end_label = ctx.generate_label("end");
                 ctx.enter_loop(entry_label.clone(), end_label.clone());
                 code.push_str(&format!("  jump {}\n", entry_label));
+
                 code.push_str(&format!("{}:\n", entry_label));
                 let (cond_code, cond_val) = cond.to_ir(ctx);
                 code.push_str(&cond_code);
-                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
-                    let temp = ctx.next_temp();
-                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
-                    temp
-                } else {
-                    cond_val
-                };
                 code.push_str(&format!(
                     "  br {}, {}, {}\n",
                     cond_val, body_label, end_label
                 ));
                 code.push_str(&format!("{}:\n", body_label));
+
                 let body_code = body.to_ir(ctx);
                 code.push_str(&body_code);
-                code.push_str(&format!("  jump {}\n", entry_label));
+                if !is_terminated(&code) {
+                    code.push_str(&format!("  jump {}\n", entry_label));
+                }
                 // end
                 code.push_str(&format!("{}:\n", end_label));
                 ctx.exit_loop();
@@ -408,7 +400,6 @@ impl InitVal {
 
 impl ConstExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
-        // println!("ConstExp");
         self.exp.eval(ctx)
     }
 }
@@ -490,7 +481,6 @@ impl EqExp {
 
 impl LAndExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
-        // println!("LAndExp");
         match self {
             LAndExp::EqExp(eq) => eq.eval(ctx),
             LAndExp::LAnd(lhs, rhs) => {
@@ -528,8 +518,10 @@ impl LAndExp {
                 code.push_str(&format!("  store {}, {}\n", rhs_val, result));
                 code.push_str(&format!("  jump {}\n", end_label));
                 code.push_str(&format!("{}:\n", end_label));
+                let save = ctx.next_temp();
                 let dst = ctx.next_temp();
-                code.push_str(&format!("  {} = load {}\n", dst, result));
+                code.push_str(&format!("  {} = load {}\n", save, result));
+                code.push_str(&format!("  {} = ne 0, {}\n", dst, save));
                 (code, dst)
             }
         }
@@ -575,8 +567,10 @@ impl LOrExp {
                 code.push_str(&format!("  store {}, {}\n", rhs_val, result));
                 code.push_str(&format!("  jump {}\n", end_label));
                 code.push_str(&format!("{}:\n", end_label));
+                let save = ctx.next_temp();
                 let dst = ctx.next_temp();
-                code.push_str(&format!("  {} = load {}\n", dst, result));
+                code.push_str(&format!("  {} = load {}\n", save, result));
+                code.push_str(&format!("  {} = ne 0, {}\n", dst, save));
                 (code, dst)
             }
         }
@@ -656,7 +650,7 @@ impl UnaryExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
             UnaryExp::Primary(primary) => primary.eval(ctx),
-            UnaryExp::Call(ident, args) => {
+            UnaryExp::Call(_ident, _args) => {
                 todo!()
             }
             UnaryExp::UnaryOp(op, expr) => {
@@ -672,7 +666,7 @@ impl UnaryExp {
     pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
         match self {
             UnaryExp::Primary(p) => p.to_ir(ctx),
-            UnaryExp::Call(ident, args) => {
+            UnaryExp::Call(_ident, _args) => {
                 todo!()
             }
             UnaryExp::UnaryOp(op, exp) => {
