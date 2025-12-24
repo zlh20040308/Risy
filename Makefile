@@ -19,6 +19,8 @@ rebuild:
 
 # 清理输出目录
 clean:
-	@rm -rf $(DEBUG_DIR)
+	@rm -rf $(DEBUG_DIR)/**.c
+	@rm -rf $(DEBUG_DIR)/**.s
+	@rm -rf $(DEBUG_DIR)/gen/*
 
 .PHONY: init fmt build rebuild clean

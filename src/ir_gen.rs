@@ -1,7 +1,21 @@
+use std::process::exit;
+
 // src/ir_gen.rs
 use super::ast::*;
 use super::context::IrContext;
 use super::context::SymbolValue;
+
+#[derive(Debug)]
+pub struct IrResult {
+    pub code: String,          // 生成的IR代码
+    pub value: Option<String>, // 可能的值（None表示void）
+}
+
+impl IrResult {
+    pub fn new(code: String, value: Option<String>) -> Self {
+        Self { code, value }
+    }
+}
 
 /// 判断一段 IR 是否已经以 `ret` 或 `jump` 结束
 fn is_terminated(code: &str) -> bool {
@@ -15,41 +29,154 @@ fn is_terminated(code: &str) -> bool {
         })
 }
 
+// 提前声明 SysY 库函数
+pub fn register_sysy_library(ctx: &mut IrContext, code: &mut String) {
+    // decl @getint(): i32
+    ctx.insert(
+        "getint",
+        SymbolValue::Func {
+            name: "getint".to_string(),
+            params: Vec::new(),
+            ret_type: Type::Int,
+        },
+    )
+    .expect("Failed to insert symbol");
+    // decl @getch(): i32
+    ctx.insert(
+        "getch",
+        SymbolValue::Func {
+            name: "getch".to_string(),
+            params: Vec::new(),
+            ret_type: Type::Int,
+        },
+    )
+    .expect("Failed to insert symbol");
+    // decl @putint(i32)
+    ctx.insert(
+        "putint",
+        SymbolValue::Func {
+            name: "putint".to_string(),
+            params: Vec::new(),
+            ret_type: Type::Void,
+        },
+    )
+    .expect("Failed to insert symbol");
+    // decl @putch(i32)
+    ctx.insert(
+        "putch",
+        SymbolValue::Func {
+            name: "putch".to_string(),
+            params: Vec::new(),
+            ret_type: Type::Void,
+        },
+    )
+    .expect("Failed to insert symbol");
+    // decl @starttime()
+    ctx.insert(
+        "starttime",
+        SymbolValue::Func {
+            name: "starttime".to_string(),
+            params: Vec::new(),
+            ret_type: Type::Void,
+        },
+    )
+    .expect("Failed to insert symbol");
+    // decl @stoptime()
+    ctx.insert(
+        "stoptime",
+        SymbolValue::Func {
+            name: "stoptime".to_string(),
+            params: Vec::new(),
+            ret_type: Type::Void,
+        },
+    )
+    .expect("Failed to insert symbol");
+
+    code.push_str("decl @getint(): i32\n");
+    code.push_str("decl @getch(): i32\n");
+    code.push_str("decl @putint(i32)\n");
+    code.push_str("decl @putch(i32)\n");
+    code.push_str("decl @starttime()\n");
+    code.push_str("decl @stoptime()\n");
+    code.push_str("\n");
+}
+
 impl CompUnit {
-    pub fn to_ir(&self) -> String {
-        let mut ctx = IrContext::new();
-        self.func_def.to_ir(&mut ctx)
+    pub fn to_ir(&self, ctx: &mut IrContext) -> String {
+        let mut result = String::new();
+        // 提前声明 SysY 库函数
+        register_sysy_library(ctx, &mut result);
+        // 生成各个 item ir
+        for item in &self.items {
+            match &**item {
+                TopLevel::Decl(decl) => {
+                    result.push_str(&decl.to_ir(ctx)); // 处理全局变量和常量
+                }
+                TopLevel::Func(func_def) => {
+                    ctx.insert(
+                        &func_def.ident,
+                        SymbolValue::Func {
+                            name: func_def.ident.clone(),
+                            params: func_def.params.clone(),
+                            ret_type: func_def.func_type.clone(),
+                        },
+                    )
+                    .expect("Failed to insert symbol");
+                    result.push_str(&func_def.to_ir(ctx)); // 处理函数定义
+                }
+            }
+        }
+        result
     }
 }
 
 impl FuncDef {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
-        let body = self.block.to_ir(ctx);
         let mut code = String::new();
         code.push_str(&format!(
-            "fun @{}(){}{{\n",
+            "fun @{}({}){}{{\n",
             self.ident,
-            self.func_type.to_ir()
+            self.params
+                .iter()
+                .map(|param| format!("@{}: i32", param.ident.clone()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.func_type.to_return()
         ));
         code.push_str("%entry:\n");
+        ctx.enter_scope();
+        let mut body = String::new();
+        for param in &self.params {
+            ctx.insert(
+                &param.ident,
+                SymbolValue::LocalVar(format!("%{}", param.ident)),
+            )
+            .expect("Failed to insert symbol");
+            body.push_str(&format!("  %{} = alloc i32\n", param.ident));
+            body.push_str(&format!("  store @{}, %{}\n", param.ident, param.ident));
+        }
+        body.push_str(&self.block.to_ir(ctx));
+        ctx.exit_scope();
         code.push_str(&body);
-        code.push_str("}");
+        if !is_terminated(&body) {
+            code.push_str("  ret\n");
+        }
+        code.push_str("}\n\n");
         code
     }
 }
 
-impl FuncType {
-    pub fn to_ir(&self) -> &'static str {
+impl Type {
+    fn to_return(&self) -> String {
         match self {
-            FuncType::Int => ": i32 ",
-            FuncType::Void => " ",
+            Self::Int => String::from(": i32 "),
+            Self::Void => String::from(" "),
         }
     }
 }
 
 impl Block {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
-        ctx.enter_scope();
         let mut ir_code = String::new();
         for item in &self.block_items {
             let item_code = item.to_ir(ctx);
@@ -59,8 +186,7 @@ impl Block {
                 break;
             }
         }
-        println!("{}", serde_json::to_string_pretty(&ctx).unwrap());
-        ctx.exit_scope();
+        // println!("{}", serde_json::to_string_pretty(&ctx).unwrap());
         ir_code
     }
 }
@@ -68,8 +194,8 @@ impl Block {
 impl Stmt {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            Stmt::Open(open) => open.to_ir(ctx),
-            Stmt::Closed(closed) => closed.to_ir(ctx),
+            Self::Open(open) => open.to_ir(ctx),
+            Self::Closed(closed) => closed.to_ir(ctx),
         }
     }
 }
@@ -77,19 +203,16 @@ impl Stmt {
 impl OpenStmt {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            OpenStmt::If(cond, then_stmt) => {
+            Self::If(cond, then_stmt) => {
                 let mut code = String::new();
-                let (cond_code, cond_val) = cond.to_ir(ctx);
+                let cond_result = cond.to_ir(ctx);
+                let cond_code = cond_result.code;
+                let cond_val = cond_result
+                    .value
+                    .expect("Condition expression must have a value");
                 let then_label = ctx.generate_label("then");
                 let end_label = ctx.generate_label("end");
                 code.push_str(&cond_code);
-                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
-                    let temp = ctx.next_temp();
-                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
-                    temp
-                } else {
-                    cond_val
-                };
                 code.push_str(&format!(
                     "  br {}, {}, {}\n",
                     cond_val, then_label, end_label
@@ -103,20 +226,17 @@ impl OpenStmt {
                 code.push_str(&format!("{}:\n", end_label));
                 code
             }
-            OpenStmt::Else(cond, then_stmt, else_stmt) => {
+            Self::Else(cond, then_stmt, else_stmt) => {
                 let mut code = String::new();
-                let (cond_code, cond_val) = cond.to_ir(ctx);
+                let cond_result = cond.to_ir(ctx);
+                let cond_code = cond_result.code;
+                let cond_val = cond_result
+                    .value
+                    .expect("Condition expression must have a value");
                 let then_label = ctx.generate_label("then");
                 let else_label = ctx.generate_label("else");
                 let end_label = ctx.generate_label("end");
                 code.push_str(&cond_code);
-                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
-                    let temp = ctx.next_temp();
-                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
-                    temp
-                } else {
-                    cond_val
-                };
                 code.push_str(&format!(
                     "  br {}, {}, {}\n",
                     cond_val, then_label, else_label
@@ -139,7 +259,7 @@ impl OpenStmt {
                 code.push_str(&format!("{}:\n", end_label));
                 code
             }
-            OpenStmt::While(cond, body) => {
+            Self::While(cond, body) => {
                 let mut code = String::new();
                 let entry_label = ctx.generate_label("while_entry");
                 let body_label = ctx.generate_label("while_body");
@@ -147,7 +267,11 @@ impl OpenStmt {
                 ctx.enter_loop(entry_label.clone(), end_label.clone());
                 code.push_str(&format!("  jump {}\n", entry_label));
                 code.push_str(&format!("{}:\n", entry_label));
-                let (cond_code, cond_val) = cond.to_ir(ctx);
+                let cond_result = cond.to_ir(ctx);
+                let cond_code = cond_result.code;
+                let cond_val = cond_result
+                    .value
+                    .expect("Condition expression must have a value");
                 code.push_str(&cond_code);
                 code.push_str(&format!(
                     "  br {}, {}, {}\n",
@@ -171,20 +295,17 @@ impl OpenStmt {
 impl ClosedStmt {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            ClosedStmt::Else(cond, then_stmt, else_stmt) => {
+            Self::Else(cond, then_stmt, else_stmt) => {
                 let mut code = String::new();
-                let (cond_code, cond_val) = cond.to_ir(ctx);
+                let cond_result = cond.to_ir(ctx);
+                let cond_code = cond_result.code;
+                let cond_val = cond_result
+                    .value
+                    .expect("Condition expression must have a value");
                 let then_label = ctx.generate_label("then");
                 let else_label = ctx.generate_label("else");
                 let end_label = ctx.generate_label("end");
                 code.push_str(&cond_code);
-                let cond_val = if let Ok(cond_num) = cond_val.parse::<i32>() {
-                    let temp = ctx.next_temp();
-                    code.push_str(&format!("  {} = add 0, {}\n", temp, cond_num));
-                    temp
-                } else {
-                    cond_val
-                };
                 code.push_str(&format!(
                     "  br {}, {}, {}\n",
                     cond_val, then_label, else_label
@@ -207,8 +328,8 @@ impl ClosedStmt {
                 code.push_str(&format!("{}:\n", end_label));
                 code
             }
-            ClosedStmt::Simple(stmt) => stmt.to_ir(ctx),
-            ClosedStmt::While(cond, body) => {
+            Self::Simple(stmt) => stmt.to_ir(ctx),
+            Self::While(cond, body) => {
                 let mut code = String::new();
                 let entry_label = ctx.generate_label("while_entry");
                 let body_label = ctx.generate_label("while_body");
@@ -217,7 +338,11 @@ impl ClosedStmt {
                 code.push_str(&format!("  jump {}\n", entry_label));
 
                 code.push_str(&format!("{}:\n", entry_label));
-                let (cond_code, cond_val) = cond.to_ir(ctx);
+                let cond_result = cond.to_ir(ctx);
+                let cond_code = cond_result.code;
+                let cond_val = cond_result
+                    .value
+                    .expect("Condition expression must have a value");
                 code.push_str(&cond_code);
                 code.push_str(&format!(
                     "  br {}, {}, {}\n",
@@ -242,40 +367,57 @@ impl ClosedStmt {
 impl SimpleStmt {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            SimpleStmt::Assign(lval, exp) => {
-                let (exp_code, exp_val) = exp.to_ir(ctx);
-                if let SymbolValue::Var(ir_name) = ctx.lookup(&lval.ident).unwrap() {
-                    format!("{}  store {}, {}\n", exp_code, exp_val, ir_name)
-                } else {
-                    panic!("LVal is not a Var")
+            Self::Assign(lval, exp) => {
+                let exp_result = exp.to_ir(ctx);
+                let exp_code = exp_result.code;
+                let exp_val = exp_result
+                    .value
+                    .expect("Condition expression must have a value");
+                match ctx.lookup(&lval.ident).unwrap() {
+                    SymbolValue::LocalVar(ir_name) => {
+                        format!("{}  store {}, {}\n", exp_code, exp_val, ir_name)
+                    }
+                    SymbolValue::GlobalVar { name, .. } => {
+                        format!("{}  store {}, {}\n", exp_code, exp_val, name)
+                    }
+                    _ => {
+                        panic!("{} is not a LVar", lval.ident)
+                    }
                 }
             }
-            SimpleStmt::Eval(exp) => {
+            Self::Eval(exp) => {
                 if let Some(exp) = exp {
-                    let (exp_code, _) = exp.to_ir(ctx);
+                    let exp_result = exp.to_ir(ctx);
+                    let exp_code = exp_result.code;
                     exp_code
                 } else {
                     String::new()
                 }
             }
-            SimpleStmt::Break => {
+            Self::Break => {
                 let label = ctx.current_loop_labels().unwrap().exit.clone();
                 format!("  jump {}\n", label)
             }
-            SimpleStmt::Continue => {
+            Self::Continue => {
                 let label = ctx.current_loop_labels().unwrap().entry.clone();
                 format!("  jump {}\n", label)
             }
-            SimpleStmt::Return(exp) => {
+            Self::Return(exp) => {
                 if let Some(exp) = exp {
-                    let (exp_code, exp_val) = exp.to_ir(ctx);
+                    let exp_result = exp.to_ir(ctx);
+                    let exp_code = exp_result.code;
+                    let exp_val = exp_result
+                        .value
+                        .expect("Condition expression must have a value");
                     format!("{}  ret {}\n", exp_code, exp_val)
                 } else {
                     format!("  ret\n")
                 }
             }
-            SimpleStmt::Block(block) => {
+            Self::Block(block) => {
+                ctx.enter_scope();
                 let code = block.to_ir(ctx);
+                ctx.exit_scope();
                 format!("{}", code)
             }
         }
@@ -287,7 +429,7 @@ impl Exp {
         self.lor_exp.eval(ctx)
     }
 
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         self.lor_exp.to_ir(ctx)
     }
 }
@@ -295,8 +437,8 @@ impl Exp {
 impl Decl {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            Decl::Var(var_decl) => var_decl.to_ir(ctx),
-            Decl::Const(const_decl) => {
+            Self::Var(var_decl) => var_decl.to_ir(ctx),
+            Self::Const(const_decl) => {
                 const_decl.analyze(ctx).expect("Semantic error");
                 String::new()
             }
@@ -328,29 +470,70 @@ impl ConstDecl {
 impl VarDef {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            VarDef::Ident(name) => {
+            Self::Ident(name) => {
                 let ir_name = ctx.generate_named(name);
-                match ctx.insert(name, SymbolValue::Var(ir_name.clone())) {
-                    Ok(_) => {
-                        format!("  {} = alloc i32\n", ir_name)
+                if ctx.is_global() {
+                    match ctx.insert(
+                        name,
+                        SymbolValue::GlobalVar {
+                            name: ir_name.clone(),
+                            init: 0,
+                        },
+                    ) {
+                        Ok(_) => {
+                            format!("global {}= alloc i32, zeroinit\n", ir_name)
+                        }
+                        Err(e) => panic!("{}", e),
                     }
-                    Err(e) => panic!("{}", e),
+                } else {
+                    match ctx.insert(name, SymbolValue::LocalVar(ir_name.clone())) {
+                        Ok(_) => {
+                            format!("  {} = alloc i32\n", ir_name)
+                        }
+                        Err(e) => panic!("{}", e),
+                    }
                 }
             }
-            VarDef::Init(name, init_value) => {
-                let (code, value) = init_value.to_ir(ctx);
+            Self::Init(name, init_value) => {
                 let ir_name = ctx.generate_named(name);
-                match ctx.insert(name, SymbolValue::Var(ir_name.clone())) {
-                    Ok(_) => {
-                        format!(
-                            "{}  {} = alloc i32\n  store {}, {}\n",
-                            code, ir_name, value, ir_name
-                        )
+                if ctx.is_global() {
+                    let init_val = init_value.eval(ctx).expect("");
+                    match ctx.insert(
+                        name,
+                        SymbolValue::GlobalVar {
+                            name: ir_name.clone(),
+                            init: init_val,
+                        },
+                    ) {
+                        Ok(_) => {
+                            format!("global {}= alloc i32, {}\n", ir_name, init_val)
+                        }
+                        Err(e) => panic!("{}", e),
                     }
-                    Err(e) => panic!("{}", e),
+                } else {
+                    let init_result = init_value.to_ir(ctx);
+                    let init_code = init_result.code;
+                    let init_value = init_result
+                        .value
+                        .expect("Condition expression must have a value");
+                    match ctx.insert(name, SymbolValue::LocalVar(ir_name.clone())) {
+                        Ok(_) => {
+                            format!(
+                                "{}  {} = alloc i32\n  store {}, {}\n",
+                                init_code, ir_name, init_value, ir_name
+                            )
+                        }
+                        Err(e) => panic!("{}", e),
+                    }
                 }
             }
         }
+    }
+}
+
+impl InitVal {
+    pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
+        self.exp.eval(ctx)
     }
 }
 
@@ -364,8 +547,13 @@ impl LVal {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match ctx.lookup(&self.ident) {
             Some(SymbolValue::Const(val)) => Ok(val),
-            Some(SymbolValue::Var(_)) => Err(format!(
-                "Cannot evaluate variable '{}' at compile-time",
+            Some(SymbolValue::GlobalVar { name: _, init }) => Ok(init),
+            Some(SymbolValue::LocalVar(_)) => Err(format!(
+                "Cannot evaluate local variable '{}' at compile-time",
+                self.ident
+            )),
+            Some(SymbolValue::Func { .. }) => Err(format!(
+                "Cannot evaluate function '{}' as an lvalue",
                 self.ident
             )),
             None => Err(format!(
@@ -375,17 +563,25 @@ impl LVal {
         }
     }
 
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         match ctx.lookup(&self.ident) {
-            Some(SymbolValue::Var(ir_name)) => {
+            Some(SymbolValue::LocalVar(ir_name)) => {
                 let temp = ctx.next_temp();
                 let code = format!("  {} = load {}\n", temp, ir_name);
-                (code, temp)
+                IrResult::new(code, Some(temp))
+            }
+            Some(SymbolValue::GlobalVar { name: ir_name, .. }) => {
+                let temp = ctx.next_temp();
+                let code = format!("  {} = load {}\n", temp, ir_name);
+                IrResult::new(code, Some(temp))
             }
             Some(SymbolValue::Const(value)) => {
                 let temp = ctx.next_temp();
                 let code = format!("  {} = add 0, {}\n", temp, value);
-                (code, temp)
+                IrResult::new(code, Some(temp))
+            }
+            Some(SymbolValue::Func { .. }) => {
+                panic!("Cannot use function '{}' as a variable", self.ident)
             }
             None => panic!("Identifier '{}' not found", self.ident),
         }
@@ -393,7 +589,7 @@ impl LVal {
 }
 
 impl InitVal {
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         self.exp.to_ir(ctx)
     }
 }
@@ -407,8 +603,8 @@ impl ConstExp {
 impl BlockItem {
     pub fn to_ir(&self, ctx: &mut IrContext) -> String {
         match self {
-            BlockItem::Decl(decl) => decl.to_ir(ctx),
-            BlockItem::Stmt(stmt) => stmt.to_ir(ctx),
+            Self::Decl(decl) => decl.to_ir(ctx),
+            Self::Stmt(stmt) => stmt.to_ir(ctx),
         }
     }
 }
@@ -416,8 +612,8 @@ impl BlockItem {
 impl RelExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
-            RelExp::AddExp(add) => add.eval(ctx),
-            RelExp::Rel(lhs, op, rhs) => {
+            Self::AddExp(add) => add.eval(ctx),
+            Self::Rel(lhs, op, rhs) => {
                 let lval = lhs.eval(ctx)?;
                 let rval = rhs.eval(ctx)?;
                 Ok(match op {
@@ -429,12 +625,20 @@ impl RelExp {
             }
         }
     }
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         match self {
-            RelExp::AddExp(add) => add.to_ir(ctx),
-            RelExp::Rel(lhs, op, rhs) => {
-                let (l_code, l_val) = lhs.to_ir(ctx);
-                let (r_code, r_val) = rhs.to_ir(ctx);
+            Self::AddExp(add) => add.to_ir(ctx),
+            Self::Rel(lhs, op, rhs) => {
+                let lhs_result = lhs.to_ir(ctx);
+                let l_code = lhs_result.code;
+                let l_val = lhs_result
+                    .value
+                    .expect("Condition expression must have a value");
+                let rhs_result = rhs.to_ir(ctx);
+                let r_code = rhs_result.code;
+                let r_val = rhs_result
+                    .value
+                    .expect("Condition expression must have a value");
                 let dst = ctx.next_temp();
                 let inst = match op {
                     RelOp::Less => format!("  {} = lt {}, {}", dst, l_val, r_val),
@@ -442,7 +646,7 @@ impl RelExp {
                     RelOp::LessEq => format!("  {} = le {}, {}", dst, l_val, r_val),
                     RelOp::GreaterEq => format!("  {} = ge {}, {}", dst, l_val, r_val),
                 };
-                (format!("{}{}{}\n", l_code, r_code, inst), dst)
+                IrResult::new(format!("{}{}{}\n", l_code, r_code, inst), Some(dst))
             }
         }
     }
@@ -451,8 +655,8 @@ impl RelExp {
 impl EqExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
-            EqExp::RelExp(rel) => rel.eval(ctx),
-            EqExp::Eq(lhs, op, rhs) => {
+            Self::RelExp(rel) => rel.eval(ctx),
+            Self::Eq(lhs, op, rhs) => {
                 let lval = lhs.eval(ctx)?;
                 let rval = rhs.eval(ctx)?;
                 Ok(match op {
@@ -462,18 +666,26 @@ impl EqExp {
             }
         }
     }
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         match self {
-            EqExp::RelExp(rel) => rel.to_ir(ctx),
-            EqExp::Eq(lhs, op, rhs) => {
-                let (l_code, l_val) = lhs.to_ir(ctx);
-                let (r_code, r_val) = rhs.to_ir(ctx);
+            Self::RelExp(rel) => rel.to_ir(ctx),
+            Self::Eq(lhs, op, rhs) => {
+                let lhs_result = lhs.to_ir(ctx);
+                let l_code = lhs_result.code;
+                let l_val = lhs_result
+                    .value
+                    .expect("Condition expression must have a value");
+                let rhs_result = rhs.to_ir(ctx);
+                let r_code = rhs_result.code;
+                let r_val = rhs_result
+                    .value
+                    .expect("Condition expression must have a value");
                 let dst = ctx.next_temp();
                 let inst = match op {
                     EqOp::Equal => format!("  {} = eq {}, {}", dst, l_val, r_val),
                     EqOp::NotEqual => format!("  {} = ne {}, {}", dst, l_val, r_val),
                 };
-                (format!("{}{}{}\n", l_code, r_code, inst), dst)
+                IrResult::new(format!("{}{}{}\n", l_code, r_code, inst), Some(dst))
             }
         }
     }
@@ -482,8 +694,8 @@ impl EqExp {
 impl LAndExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
-            LAndExp::EqExp(eq) => eq.eval(ctx),
-            LAndExp::LAnd(lhs, rhs) => {
+            Self::EqExp(eq) => eq.eval(ctx),
+            Self::LAnd(lhs, rhs) => {
                 let lval = lhs.eval(ctx)?;
                 if lval == 0 {
                     return Ok(0); // 短路，直接返回
@@ -493,36 +705,42 @@ impl LAndExp {
             }
         }
     }
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         match self {
-            LAndExp::EqExp(eq) => eq.to_ir(ctx),
-            LAndExp::LAnd(lhs, rhs) => {
+            Self::EqExp(eq) => eq.to_ir(ctx),
+            Self::LAnd(lhs, rhs) => {
                 let result = ctx.next_temp();
                 let mut code = String::new();
                 code.push_str(&format!("  {} = alloc i32\n", result));
                 code.push_str(&format!("  store 0, {}\n", result));
-                let (lhs_code, lhs_val) = lhs.to_ir(ctx);
-                code.push_str(&lhs_code);
+                let lhs_result = lhs.to_ir(ctx);
+                let l_code = lhs_result.code;
+                let l_val = lhs_result
+                    .value
+                    .expect("Condition expression must have a value");
+
+                code.push_str(&l_code);
                 let rhs_label = ctx.generate_label("rhs_label");
                 let true_label = ctx.generate_label("true_label");
                 let end_label = ctx.generate_label("end_label");
-                code.push_str(&format!("  br {}, {}, {}\n", lhs_val, rhs_label, end_label));
+                code.push_str(&format!("  br {}, {}, {}\n", l_val, rhs_label, end_label));
                 code.push_str(&format!("{}:\n", rhs_label));
-                let (rhs_code, rhs_val) = rhs.to_ir(ctx);
-                code.push_str(&rhs_code);
-                code.push_str(&format!(
-                    "  br {}, {}, {}\n",
-                    rhs_val, true_label, end_label
-                ));
+                let rhs_result = rhs.to_ir(ctx);
+                let r_code = rhs_result.code;
+                let r_val = rhs_result
+                    .value
+                    .expect("Condition expression must have a value");
+                code.push_str(&r_code);
+                code.push_str(&format!("  br {}, {}, {}\n", r_val, true_label, end_label));
                 code.push_str(&format!("{}:\n", true_label));
-                code.push_str(&format!("  store {}, {}\n", rhs_val, result));
+                code.push_str(&format!("  store {}, {}\n", r_val, result));
                 code.push_str(&format!("  jump {}\n", end_label));
                 code.push_str(&format!("{}:\n", end_label));
                 let save = ctx.next_temp();
                 let dst = ctx.next_temp();
                 code.push_str(&format!("  {} = load {}\n", save, result));
                 code.push_str(&format!("  {} = ne 0, {}\n", dst, save));
-                (code, dst)
+                IrResult::new(code, Some(dst))
             }
         }
     }
@@ -531,8 +749,8 @@ impl LAndExp {
 impl LOrExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
-            LOrExp::LAndExp(land) => land.eval(ctx),
-            LOrExp::LOr(lhs, rhs) => {
+            Self::LAndExp(land) => land.eval(ctx),
+            Self::LOr(lhs, rhs) => {
                 let lval = lhs.eval(ctx)?;
                 if lval != 0 {
                     return Ok(1); // 短路，直接返回
@@ -542,36 +760,41 @@ impl LOrExp {
             }
         }
     }
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         match self {
-            LOrExp::LAndExp(land) => land.to_ir(ctx),
-            LOrExp::LOr(lhs, rhs) => {
+            Self::LAndExp(land) => land.to_ir(ctx),
+            Self::LOr(lhs, rhs) => {
                 let result = ctx.next_temp();
                 let mut code = String::new();
                 code.push_str(&format!("  {} = alloc i32\n", result));
                 code.push_str(&format!("  store 1, {}\n", result));
-                let (lhs_code, lhs_val) = lhs.to_ir(ctx);
-                code.push_str(&lhs_code);
+                let lhs_result = lhs.to_ir(ctx);
+                let l_code = lhs_result.code;
+                let l_val = lhs_result
+                    .value
+                    .expect("Condition expression must have a value");
+                code.push_str(&l_code);
                 let rhs_label = ctx.generate_label("rhs_label");
                 let true_label = ctx.generate_label("true_label");
                 let end_label = ctx.generate_label("end_label");
-                code.push_str(&format!("  br {}, {}, {}\n", lhs_val, end_label, rhs_label));
+                code.push_str(&format!("  br {}, {}, {}\n", l_val, end_label, rhs_label));
                 code.push_str(&format!("{}:\n", rhs_label));
-                let (rhs_code, rhs_val) = rhs.to_ir(ctx);
-                code.push_str(&rhs_code);
-                code.push_str(&format!(
-                    "  br {}, {}, {}\n",
-                    rhs_val, end_label, true_label
-                ));
+                let rhs_result = rhs.to_ir(ctx);
+                let r_code = rhs_result.code;
+                let r_val = rhs_result
+                    .value
+                    .expect("Condition expression must have a value");
+                code.push_str(&r_code);
+                code.push_str(&format!("  br {}, {}, {}\n", r_val, end_label, true_label));
                 code.push_str(&format!("{}:\n", true_label));
-                code.push_str(&format!("  store {}, {}\n", rhs_val, result));
+                code.push_str(&format!("  store {}, {}\n", r_val, result));
                 code.push_str(&format!("  jump {}\n", end_label));
                 code.push_str(&format!("{}:\n", end_label));
                 let save = ctx.next_temp();
                 let dst = ctx.next_temp();
                 code.push_str(&format!("  {} = load {}\n", save, result));
                 code.push_str(&format!("  {} = ne 0, {}\n", dst, save));
-                (code, dst)
+                IrResult::new(code, Some(dst))
             }
         }
     }
@@ -580,8 +803,8 @@ impl LOrExp {
 impl AddExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
-            AddExp::MulExp(mul) => mul.eval(ctx),
-            AddExp::Binary(lhs, op, rhs) => {
+            Self::MulExp(mul) => mul.eval(ctx),
+            Self::Binary(lhs, op, rhs) => {
                 let lval = lhs.eval(ctx)?;
                 let rval = rhs.eval(ctx)?;
                 Ok(match op {
@@ -593,19 +816,27 @@ impl AddExp {
         }
     }
 
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         match self {
-            AddExp::MulExp(mul) => mul.to_ir(ctx),
-            AddExp::Binary(lhs, op, rhs) => {
-                let (l_code, l_val) = lhs.to_ir(ctx);
-                let (r_code, r_val) = rhs.to_ir(ctx);
+            Self::MulExp(mul) => mul.to_ir(ctx),
+            Self::Binary(lhs, op, rhs) => {
+                let lhs_result = lhs.to_ir(ctx);
+                let l_code = lhs_result.code;
+                let l_val = lhs_result
+                    .value
+                    .expect("Condition expression must have a value");
+                let rhs_result = rhs.to_ir(ctx);
+                let r_code = rhs_result.code;
+                let r_val = rhs_result
+                    .value
+                    .expect("Condition expression must have a value");
                 let dst = ctx.next_temp();
                 let inst = match op {
                     BinOp::Add => format!("  {} = add {}, {}", dst, l_val, r_val),
                     BinOp::Minus => format!("  {} = sub {}, {}", dst, l_val, r_val),
                     _ => panic!("unexpected binop in AddExp"),
                 };
-                (format!("{}{}{}\n", l_code, r_code, inst), dst)
+                IrResult::new(format!("{}{}{}\n", l_code, r_code, inst), Some(dst))
             }
         }
     }
@@ -614,8 +845,8 @@ impl AddExp {
 impl MulExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
-            MulExp::Unary(unary) => unary.eval(ctx),
-            MulExp::Binary(lhs, op, rhs) => {
+            Self::Unary(unary) => unary.eval(ctx),
+            Self::Binary(lhs, op, rhs) => {
                 let lval = lhs.eval(ctx)?;
                 let rval = rhs.eval(ctx)?;
                 Ok(match op {
@@ -627,12 +858,20 @@ impl MulExp {
             }
         }
     }
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         match self {
-            MulExp::Unary(u) => u.to_ir(ctx),
-            MulExp::Binary(lhs, op, rhs) => {
-                let (l_code, l_val) = lhs.to_ir(ctx);
-                let (r_code, r_val) = rhs.to_ir(ctx);
+            Self::Unary(u) => u.to_ir(ctx),
+            Self::Binary(lhs, op, rhs) => {
+                let lhs_result = lhs.to_ir(ctx);
+                let l_code = lhs_result.code;
+                let l_val = lhs_result
+                    .value
+                    .expect("Condition expression must have a value");
+                let rhs_result = rhs.to_ir(ctx);
+                let r_code = rhs_result.code;
+                let r_val = rhs_result
+                    .value
+                    .expect("Condition expression must have a value");
                 let dst = ctx.next_temp();
                 let inst = match op {
                     BinOp::Mul => format!("  {} = mul {}, {}", dst, l_val, r_val),
@@ -640,7 +879,7 @@ impl MulExp {
                     BinOp::Mod => format!("  {} = mod {}, {}", dst, l_val, r_val),
                     _ => panic!("unexpected binop in MulExp"),
                 };
-                (format!("{}{}{}\n", l_code, r_code, inst), dst)
+                IrResult::new(format!("{}{}{}\n", l_code, r_code, inst), Some(dst))
             }
         }
     }
@@ -649,11 +888,12 @@ impl MulExp {
 impl UnaryExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
-            UnaryExp::Primary(primary) => primary.eval(ctx),
-            UnaryExp::Call(_ident, _args) => {
-                todo!()
-            }
-            UnaryExp::UnaryOp(op, expr) => {
+            Self::Primary(primary) => primary.eval(ctx),
+            Self::Call(ident, _) => Err(format!(
+                "Cannot evaluate function call '{}' at compile-time",
+                ident
+            )),
+            Self::UnaryOp(op, expr) => {
                 let val = expr.eval(ctx)?;
                 Ok(match op {
                     UnaryOp::Plus => val,
@@ -663,27 +903,61 @@ impl UnaryExp {
             }
         }
     }
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         match self {
-            UnaryExp::Primary(p) => p.to_ir(ctx),
-            UnaryExp::Call(_ident, _args) => {
-                todo!()
+            Self::Primary(exp) => exp.to_ir(ctx),
+            Self::Call(ident, args) => {
+                let mut code = String::new();
+                let mut ir_args = Vec::new();
+                for arg in args {
+                    let arg_result = arg.to_ir(ctx);
+                    let arg_code = arg_result.code;
+                    let arg_val = arg_result
+                        .value
+                        .expect("Condition expression must have a value");
+                    code.push_str(&arg_code);
+                    ir_args.push(arg_val);
+                }
+                match ctx.get_func_type(ident) {
+                    Ok(Type::Void) => {
+                        code.push_str(&format!("  call @{}({})\n", ident, &ir_args.join(", ")));
+                        IrResult::new(code, None)
+                    }
+                    Ok(Type::Int) => {
+                        let temp = ctx.next_temp();
+                        code.push_str(&format!(
+                            "  {} = call @{}({})\n",
+                            temp,
+                            ident,
+                            &ir_args.join(", ")
+                        ));
+                        IrResult::new(code, Some(temp))
+                    }
+                    Err(err_msg) => {
+                        eprintln!("Error: {}", err_msg);
+                        exit(1);
+                    }
+                }
             }
-            UnaryExp::UnaryOp(op, exp) => {
-                let (exp_code, exp_val) = exp.to_ir(ctx);
+            Self::UnaryOp(op, exp) => {
+                let exp_result = exp.to_ir(ctx);
+                let exp_code = exp_result.code;
+                let exp_val = exp_result
+                    .value
+                    .expect("Condition expression must have a value");
                 let mut code = String::new();
                 code.push_str(&exp_code);
                 match op {
-                    UnaryOp::Plus => (code, exp_val),
+                    UnaryOp::Plus => IrResult::new(code, Some(exp_val)),
                     UnaryOp::Minus => {
                         let temp = ctx.next_temp();
                         code.push_str(&format!("  {} = sub 0, {}\n", temp, exp_val));
-                        (code, temp)
+                        IrResult::new(code, Some(temp))
                     }
                     UnaryOp::Not => {
                         let temp = ctx.next_temp();
                         code.push_str(&format!("  {} = eq 0, {}\n", temp, exp_val));
-                        (code, temp)
+                        IrResult::new(code, Some(temp))
                     }
                 }
             }
@@ -694,20 +968,20 @@ impl UnaryExp {
 impl PrimaryExp {
     pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
         match self {
-            PrimaryExp::Number(n) => Ok(*n),
-            PrimaryExp::LVal(lval) => lval.eval(ctx),
-            PrimaryExp::Paren(exp) => exp.eval(ctx),
+            Self::Number(n) => Ok(*n),
+            Self::LVal(lval) => lval.eval(ctx),
+            Self::Paren(exp) => exp.eval(ctx),
         }
     }
-    pub fn to_ir(&self, ctx: &mut IrContext) -> (String, String) {
+    pub fn to_ir(&self, ctx: &mut IrContext) -> IrResult {
         match self {
-            PrimaryExp::Number(n) => {
+            Self::Number(n) => {
                 let temp = ctx.next_temp();
                 let code = format!("  {} = add 0, {}\n", temp.clone(), n);
-                (code, temp)
+                IrResult::new(code, Some(temp))
             }
-            PrimaryExp::LVal(lval) => lval.to_ir(ctx),
-            PrimaryExp::Paren(inner) => inner.to_ir(ctx),
+            Self::LVal(lval) => lval.to_ir(ctx),
+            Self::Paren(inner) => inner.to_ir(ctx),
         }
     }
 }

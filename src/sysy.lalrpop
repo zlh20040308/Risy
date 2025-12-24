@@ -1,64 +1,73 @@
 use crate::ast::*;
 
-
-// lalrpop 里的约定
 grammar;
 
-// 约束 lexer 的行为
 match {
-    // 跳过空白符和注释
     r"\s*" => {},
     r"//[^\n\r]*[\n\r]*" => {},
     r"/\*[^*]*\*+([^/*][^*]*\*+)*/" => {},
-    // 剩下的情况采用默认方式处理
     _
 }
 
-// CompUnit    ::= [CompUnit] FuncDef;
-pub CompUnit: Box<CompUnit> = <comp_unit: CompUnit?> <func_def: FuncDef> => Box::new(CompUnit { <> });
+// CompUnit ::= [CompUnit] (Decl | FuncDef);
+pub CompUnit: Box<CompUnit> = <items: TopLevel*> => Box::new(CompUnit { <> });
+
+TopLevel: Box<TopLevel> = {
+    Decl    => Box::new(TopLevel::Decl(<>)),
+    FuncDef => Box::new(TopLevel::Func(<>)),
+};
 
 // Block         ::= "{" {BlockItem} "}";
 Block: Box<Block> = "{" <block_items: BlockItem*> "}" => Box::new(Block { <> });
 
-// FuncDef     ::= FuncType IDENT "(" [FuncFParams] ")" Block;
+// FuncHead     ::= FuncType IDENT "("
+FuncHead: (Type, String) = {
+    "int" <ident: Ident> "("  => (Type::Int, ident),
+    "void" <ident: Ident> "(" => (Type::Void, ident),
+};
+
+// FuncDef      ::= FuncHead [FuncFParams] ")" Block;
 FuncDef: Box<FuncDef> = {
-    <func_type: FuncType> <ident: Ident> "(" <func_formal_params: FuncFParams?> ")" <block: Block> => {
-        Box::new(FuncDef { <> })
-    }
-};
-
-// FuncType    ::= "void" | "int";
-FuncType: FuncType = {
-    "void" => FuncType::Void,
-    "int"  => FuncType::Int,
-};
-
-// FuncFParams ::= FuncFParam {"," FuncFParam};
-FuncFParams: Box<FuncFParams> = {
-    <first_fparam: FuncFParam> <rest_fparams: ("," <FuncFParam>)*> => {
-        let mut func_fparams = vec![first_fparam];
-        for fparam in rest_fparams {
-            func_fparams.push(fparam);
-        }
-        Box::new(FuncFParams {
-            func_fparams,
+    <func_head: FuncHead> <params: FuncFParams?> ")" <block: Block> => {
+        let (func_type, ident) = func_head;
+        let params = params.unwrap_or(vec![]);
+        Box::new(FuncDef {
+            func_type,
+            ident,
+            params,
+            block,
         })
     }
 };
 
+
+// FuncFParams ::= FuncFParam {"," FuncFParam};
+FuncFParams: Vec<FuncFParam> = {
+    <first_fparam: FuncFParam> <rest_fparams: ("," <FuncFParam>)*> => {
+        let mut params = vec![first_fparam];
+        for fparam in rest_fparams {
+            params.push(fparam);
+        }
+        params
+    }
+};
+
 // FuncFParam  ::= BType IDENT;
-FuncFParam: Box<FuncFParam> = <btype: BType> <ident: Ident> => Box::new(FuncFParam { <> });
+FuncFParam: FuncFParam = "int" <ident: Ident> => {
+    FuncFParam { 
+        func_type: Type::Int,
+        ident: ident,
+    }
+};
 
 // FuncRParams ::= Exp {"," Exp};
-FuncRParams: Box<FuncRParams> = {
+FuncRParams: Vec<Box<Exp>> = {
     <first_exp: Exp> <rest_exps: ("," <Exp>)*> => {
         let mut args = vec![first_exp];
         for exp in rest_exps {
             args.push(exp);
         }
-        Box::new(FuncRParams {
-            args,
-        })
+        args
     }
 };
 
@@ -98,13 +107,13 @@ Decl: Box<Decl> = {
 
 // VarDecl       ::= BType VarDef {"," VarDef} ";";
 VarDecl: Box<VarDecl> = {
-    <btype: BType> <first_def: VarDef> <rest_defs: ("," <VarDef>)*> ";" => {
+    "int" <first_def: VarDef> <rest_defs: ("," <VarDef>)*> ";" => {
         let mut var_defs = vec![first_def];
         for def in rest_defs {
             var_defs.push(def);
         }
         Box::new(VarDecl {
-            btype,
+            btype: Type::Int,
             var_defs,
         })
     }
@@ -112,20 +121,17 @@ VarDecl: Box<VarDecl> = {
 
 // ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
 ConstDecl: Box<ConstDecl> = {
-    "const" <btype: BType> <first_def: ConstDef> <rest_defs: ("," <ConstDef>)*> ";" => {
+    "const" "int" <first_def: ConstDef> <rest_defs: ("," <ConstDef>)*> ";" => {
         let mut const_defs = vec![first_def];
         for def in rest_defs {
             const_defs.push(def);
         }
         Box::new(ConstDecl {
-            btype,
+            btype: Type::Int,
             const_defs,
         })
     }
 }
-
-// BType         ::= "int";
-BType: String = "int" => <>.to_string();
 
 // VarDef        ::= IDENT | IDENT "=" InitVal;
 VarDef: Box<VarDef> = {
@@ -197,7 +203,10 @@ PrimaryExp: Box<PrimaryExp> = {
 
 UnaryExp: Box<UnaryExp> = {
     PrimaryExp                     => Box::new(UnaryExp::Primary(<>)),
-    <Ident> "(" <FuncRParams?> ")" => Box::new(UnaryExp::Call(<>)),
+    <ident: Ident> "(" <params: FuncRParams?> ")" => {
+        let params = params.unwrap_or(vec![]);
+        Box::new(UnaryExp::Call(ident, params))
+    },
     UnaryOp UnaryExp               => Box::new(UnaryExp::UnaryOp(<>)),
 };
 

@@ -2,39 +2,34 @@
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
+pub enum TopLevel {
+    Decl(Box<Decl>),
+    Func(Box<FuncDef>),
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct CompUnit {
-    pub comp_unit: Option<Box<CompUnit>>,
-    pub func_def: Box<FuncDef>,
+    pub items: Vec<Box<TopLevel>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FuncDef {
-    pub func_type: FuncType,
+    pub func_type: Type,
     pub ident: String,
-    pub func_formal_params: Option<Box<FuncFParams>>,
+    pub params: Vec<FuncFParam>,
     pub block: Box<Block>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub enum FuncType {
+pub enum Type {
     Void,
     Int,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct FuncFParams {
-    pub func_fparams: Vec<Box<FuncFParam>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct FuncFParam {
-    pub btype: String,
+    pub func_type: Type,
     pub ident: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct FuncRParams {
-    pub args: Vec<Box<Exp>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -85,13 +80,13 @@ pub enum Decl {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VarDecl {
-    pub btype: String,
+    pub btype: Type,
     pub var_defs: Vec<Box<VarDef>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ConstDecl {
-    pub btype: String,
+    pub btype: Type,
     pub const_defs: Vec<Box<ConstDef>>,
 }
 
@@ -179,7 +174,7 @@ pub enum PrimaryExp {
 #[derive(Debug, Clone, Serialize)]
 pub enum UnaryExp {
     Primary(Box<PrimaryExp>),
-    Call(String, Option<Box<FuncRParams>>),
+    Call(String, Vec<Box<Exp>>),
     UnaryOp(UnaryOp, Box<UnaryExp>),
 }
 

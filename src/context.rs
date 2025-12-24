@@ -2,10 +2,22 @@
 use serde::Serialize;
 use std::collections::HashMap;
 
+use crate::ast::FuncFParam;
+use crate::ast::Type;
+
 #[derive(Debug, Clone, Serialize)]
 pub enum SymbolValue {
     Const(i32),
-    Var(String),
+    LocalVar(String),
+    GlobalVar {
+        name: String,
+        init: i32,
+    },
+    Func {
+        name: String,
+        params: Vec<FuncFParam>,
+        ret_type: Type,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,6 +50,10 @@ impl IrContext {
         let name = format!("%{}", self.temp_counter);
         self.temp_counter += 1;
         name
+    }
+
+    pub fn is_global(&self) -> bool {
+        self.symbol_table.len() == 1
     }
 
     pub fn generate_label(&mut self, prefix: &str) -> String {
@@ -96,5 +112,20 @@ impl IrContext {
 
     pub fn current_loop_labels(&self) -> Option<LoopLabels> {
         self.loop_stack.last().cloned()
+    }
+
+    pub fn get_func_type(&self, func_name: &str) -> Result<Type, String> {
+        if self.symbol_table.is_empty() {
+            return Err("symbol table is empty".to_string());
+        }
+
+        let symbol = self.symbol_table[0]
+            .get(func_name)
+            .ok_or_else(|| format!("function '{}' not found", func_name))?;
+
+        match symbol {
+            SymbolValue::Func { ret_type, .. } => Ok(ret_type.clone()),
+            _ => Err(format!("'{}' is not a function", func_name)),
+        }
     }
 }

@@ -9,7 +9,9 @@ mod ast;
 mod context;
 mod ir_gen;
 
+use asm_gen::AsmContext;
 use asm_gen::GenerateAsm;
+use context::IrContext;
 
 lalrpop_mod!(
     #[allow(clippy::ptr_arg)]
@@ -46,7 +48,8 @@ fn main() -> Result<()> {
     let json_str = serde_json::to_string_pretty(&ast).unwrap();
     fs::write("ast.json", json_str).expect("Failed to write to ast.json");
 
-    let ir = ast.to_ir();
+    let mut ir_ctx = IrContext::new();
+    let ir = ast.to_ir(&mut ir_ctx);
 
     match args.mode.as_str() {
         "-koopa" => {
@@ -58,7 +61,8 @@ fn main() -> Result<()> {
             let program = driver
                 .generate_program()
                 .expect("Failed to generate program");
-            let asm = program.generate();
+            let mut asm_ctx = AsmContext::new();
+            let asm = program.generate(&mut asm_ctx);
             fs::write(&args.output, asm)?;
         }
         _ => {
