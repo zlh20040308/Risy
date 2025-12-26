@@ -200,11 +200,10 @@ impl GenerateAsm for Program {
                 let init = global_alloc.init();
                 match self.borrow_value(init).kind() {
                     ValueKind::Integer(init_val) => {
-                        if init_val.value() == 0 {
-                            asm.push_str(&format!("  .zero 4\n"));
-                        } else {
-                            asm.push_str(&format!("  .word {}\n", init_val.value()));
-                        }
+                        asm.push_str(&format!("  .word {}\n", init_val.value()));
+                    }
+                    ValueKind::ZeroInit(_) => {
+                        asm.push_str(&format!("  .zero 4\n"));
                     }
                     _ => {}
                 }
