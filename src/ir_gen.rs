@@ -439,7 +439,7 @@ impl Decl {
         match self {
             Self::Var(var_decl) => var_decl.to_ir(ctx),
             Self::Const(const_decl) => {
-                const_decl.analyze(ctx).expect("Semantic error");
+                const_decl.analyze(ctx);
                 String::new()
             }
         }
@@ -458,12 +458,15 @@ impl VarDecl {
 }
 
 impl ConstDecl {
-    pub fn analyze(&self, ctx: &mut IrContext) -> Result<(), String> {
+    pub fn analyze(&self, ctx: &mut IrContext) {
         for def in &self.const_defs {
-            let value = def.const_init_val.eval(ctx)?; // 编译期求值
-            ctx.insert(&def.ident, SymbolValue::Const(value))?; // 插入符号表
+            let value = def.const_init_val.eval(ctx); // 编译期求值
+            ctx.insert(&def.ident, SymbolValue::Const(value))
+                .unwrap_or_else(|e| {
+                    eprintln!("{}", e);
+                    exit(1);
+                });
         }
-        Ok(())
     }
 }
 
@@ -538,7 +541,7 @@ impl InitVal {
 }
 
 impl ConstInitVal {
-    pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
+    pub fn eval(&self, ctx: &mut IrContext) -> i32 {
         self.const_exp.eval(ctx)
     }
 }
@@ -595,8 +598,14 @@ impl InitVal {
 }
 
 impl ConstExp {
-    pub fn eval(&self, ctx: &mut IrContext) -> Result<i32, String> {
-        self.exp.eval(ctx)
+    pub fn eval(&self, ctx: &mut IrContext) -> i32 {
+        match self.exp.eval(ctx) {
+            Ok(val) => val,
+            Err(e) => {
+                eprintln!("{}", e);
+                exit(1);
+            }
+        }
     }
 }
 
